@@ -106,11 +106,12 @@
   // A は透明な液体より重くて沈み、B は軽くて浮く。透明な液体は抵抗として扱う
   // =========================================================
   const R = 14, SP = 6.2, SUB = 2;
-  const K = 0.24, KN = 0.45, KC = 0.025;    // 圧力・近距離圧力・異色どうしの弱い反発
+  const K = 0.24, KN = 0.45, KC = 0.025;    // 圧力・近距離圧力・異色どうしの弱い反発(真ん中)
+  const KX = 0.12;                          // 部屋の中では2色がしっかり押しのけ合う
   const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
   const GRAV = [0.010, -0.0092];           // A は沈む / B は浮く(重力の向きに対して)
   const DRAG = 0.972, VMAX = 6;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
-  const MAXN = 1400;
+  const MAXN = 1600;
   const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
   const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
   const VX = new Float32Array(MAXN), VY = new Float32Array(MAXN);
@@ -128,12 +129,13 @@
     N = 0;
     // A は上の部屋のV字の上に、B は下の部屋の山型の下に(上下対称に置く)
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 6; yy -= SP * 0.866, row++) {
+      const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 3; yy -= sp * 0.866, row++) {
         const y = t ? H - yy : yy;
         const lim = halfW(y) - 3;
-        for (let x = W / 2 - lim + (row & 1) * SP / 2; x <= W / 2 + lim; x += SP) {
+        for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
           const top = plateTop(x) - 4;
-          if (yy > top || top - yy > 56 || N >= MAXN) continue;
+          if (yy > top || N >= MAXN) continue;   // 部屋は満タン
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
           VX[N] = VY[N] = 0; T[N] = t; N++;
         }
@@ -230,6 +232,7 @@
         }
       }
       const pr = K * (rho - rho0), prN = KN * rhoN;
+      const inRoom = yi < PLATE_Y + PLATE_V || yi > H - PLATE_Y - PLATE_V;
       let sx = 0, sy = 0;
       for (let m = 0; m < n; m++) {
         const j = nbJ[m], q = nbQ[m], a = 1 - q;
@@ -237,7 +240,11 @@
         const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
         dx /= d; dy /= d;
         // 同じ色: 圧力+表面張力 / 違う色: 近いときだけ弱く押し合う(重なりながらすれ違える)
-        const D = nbS[m] ? (pr * a + prN * a * a) * 0.5 : (q < 0.7 ? KC * a * a * 0.5 : 0);
+        // 部屋の中: 混ざらない2つの液体として押しのけ合う
+        // 真ん中: 奥行きの違う滴として、重なりながらすれ違う
+        const D = nbS[m] ? (pr * a + prN * a * a) * 0.5
+                : inRoom ? (KX * a + KN * a * a) * 0.5
+                : (q < 0.7 ? KC * a * a * 0.5 : 0);
         X[j] += dx * D; Y[j] += dy * D;
         sx -= dx * D; sy -= dy * D;
       }
