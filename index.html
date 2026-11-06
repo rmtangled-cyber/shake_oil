@@ -28,7 +28,12 @@
   button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #ffffff;
     background:var(--panel); color:var(--fg); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   button:focus-visible { outline:2px solid var(--sub); outline-offset:2px; }
-  #sensor { display:none; }
+  #sensor { display:none; align-items:center; gap:10px; }
+  #sensor .track { width:38px; height:22px; border-radius:11px; background:#d9d0d6; position:relative; transition:background .2s; flex:none; }
+  #sensor .knob { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff;
+    box-shadow:0 1px 3px #0003; transition:transform .2s; }
+  #sensor[aria-checked="true"] .track { background:#7d8cf0; }
+  #sensor[aria-checked="true"] .knob { transform:translateX(16px); }
   #fps { position:fixed; left:8px; bottom:calc(2px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); }
 </style>
 </head>
@@ -41,7 +46,7 @@
 <div id="btns">
   <button id="color">色をかえる</button>
   <button id="flip">ひっくり返す</button>
-  <button id="sensor">スマホを振って遊ぶ</button>
+  <button id="sensor" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
 </div>
 <div id="fps"></div>
 <script>
@@ -545,22 +550,32 @@
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensor');
   let sax = 0, say = 0, gsx = 0, gsy = 1, sensorOn = false;
-  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-block';
+  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-flex';
+  function onMotion(e) {
+    const a = e.acceleration, g = e.accelerationIncludingGravity;
+    if (a && a.x != null) { sax = a.x; say = -a.y; }
+    if (g && g.x != null) {          // 端末の傾き = 重力の向き
+      const x = -(g.x - (a ? a.x : 0)), y = (g.y - (a ? a.y : 0));
+      const l = Math.hypot(x, y);
+      if (l > 2) { gsx += (x / l - gsx) * 0.2; gsy += (-y / l - gsy) * 0.2; }
+    }
+  }
+  function setSensor(on) {
+    sensorOn = on;
+    sBtn.setAttribute('aria-checked', on ? 'true' : 'false');
+    if (on) addEventListener('devicemotion', onMotion);
+    else {
+      removeEventListener('devicemotion', onMotion);
+      sax = say = 0; gsx = 0; gsy = 1;   // 重力をまっすぐ下に戻す
+    }
+  }
+  // タップするたびに ON / OFF を切り替える(iPhoneは最初の ON のときだけ許可を聞かれる)
   sBtn.addEventListener('click', async () => {
+    if (sensorOn) { setSensor(false); return; }
     try {
       if (typeof DeviceMotionEvent.requestPermission === 'function' &&
           (await DeviceMotionEvent.requestPermission()) !== 'granted') return;
-      if (sensorOn) return;
-      sensorOn = true; sBtn.textContent = 'センサーON';
-      addEventListener('devicemotion', e => {
-        const a = e.acceleration, g = e.accelerationIncludingGravity;
-        if (a && a.x != null) { sax = a.x; say = -a.y; }
-        if (g && g.x != null) {          // 端末の傾き = 重力の向き
-          const x = -(g.x - (a ? a.x : 0)), y = (g.y - (a ? a.y : 0));
-          const l = Math.hypot(x, y);
-          if (l > 2) { gsx += (x / l - gsx) * 0.2; gsy += (-y / l - gsy) * 0.2; }
-        }
-      });
+      setSensor(true);
     } catch (_) {}
   });
 
