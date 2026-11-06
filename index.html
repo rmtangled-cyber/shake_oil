@@ -53,30 +53,36 @@
   const W = 200, H = 420;
   const WAIST = 16;                         // ゆるいくびれ
   const CAP = 46, SIDE = 11;                // 上下ブロックと側面の厚み
-  const PLATE_Y = 34, PLATE_V = 26;         // 仕切り: 壁際の高さとV字の深さ(たまる部屋は小さく、滴の通り道を広く)
+  const PLATE_Y = 30, PLATE_V = 20;         // 仕切り: 壁際の高さと斜面の深さ(たまる部屋は小さく、滴の通り道を広く)
   const HOLE = 11;                          // 中央の穴の半幅(液が通れるのはここだけ)
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
     return W / 2 - WAIST * s * s;
   }
-  // 仕切り(上はV字、下は山型。上下対称なので逆さにしても同じ)。壁までぴったりつながっていて、すき間はない
+  // 仕切り: 砂時計のくびれのような「くさび」。上から見るとV字、下から見ると山型で、
+  // 落ちる液も昇る液も真ん中の穴に集まる。壁までぴったりつながっていて、すき間はない。上下対称
   const SEG = [];
+  const PLATE_POLY = [];    // 描画用のくさびの形
   {
     const cx = W / 2, hw = halfW(PLATE_Y) + 2;   // 壁の中まで少し延ばして角のすき間をなくす
     for (const flip of [false, true]) {
       const f = y => flip ? H - y : y;
-      SEG.push([cx - hw, f(PLATE_Y), cx - HOLE, f(PLATE_Y + PLATE_V)]);
-      SEG.push([cx + HOLE, f(PLATE_Y + PLATE_V), cx + hw, f(PLATE_Y)]);
+      for (const sx of [-1, 1]) {
+        const wx = cx + sx * hw, hx = cx + sx * HOLE;
+        SEG.push([wx, f(PLATE_Y), hx, f(PLATE_Y + PLATE_V)]);              // 上の斜面
+        SEG.push([hx, f(PLATE_Y + PLATE_V), wx, f(PLATE_Y + PLATE_V * 2)]); // 下の斜面
+        PLATE_POLY.push([[wx, f(PLATE_Y)], [hx, f(PLATE_Y + PLATE_V)], [wx, f(PLATE_Y + PLATE_V * 2)]]);
+      }
     }
   }
   // ふた(色ごとに通す/通さないを切り替える見えない板)
-  //   上のV字(じょうご): 真ん中のノズルだけ、青とピンクを交互に一定間隔で通す
-  //   下の山型: 落ちてきた滴は頂点の穴から下の部屋へ
+  //   上の仕切りの穴: 青を一定間隔で1滴ずつ落とす(昇ってきたピンクはいつでも通る)
+  //   下の仕切りの穴: ピンクを一定間隔で1滴ずつ昇らせる(落ちてきた青はいつでも通る)
   SEG.push([W / 2 - HOLE - 1, PLATE_Y + PLATE_V, W / 2 + HOLE + 1, PLATE_Y + PLATE_V]);
   SEG.push([W / 2 - HOLE - 1, H - PLATE_Y - PLATE_V, W / 2 + HOLE + 1, H - PLATE_Y - PLATE_V]);
-  const NPLATE = 4, NS = SEG.length;
+  const NPLATE = 8, NS = SEG.length;
   const lidMask = new Uint8Array(2);   // ビット0=Aを止める ビット1=Bを止める
-  const DRIP_PERIOD = 1.7, DRIP_OPEN = 0.55;   // 秒(2色は半周期ずらして交互に)
+  const DRIP_PERIOD = 1.7, DRIP_OPEN = 0.55;   // 秒(青とピンクは半周期ずらして交互に)
   const SX = new Float32Array(NS), SY = new Float32Array(NS), SDX = new Float32Array(NS), SDY = new Float32Array(NS),
         SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
   SEG.forEach(([x1, y1, x2, y2], i) => {
@@ -98,44 +104,43 @@
 
   // =========================================================
   // 物理(粒子法: double density relaxation)
-  // A も B も透明な液体より重く、真ん中のノズルから交互に落ちる。透明な液体は抵抗として扱う
+  // 青は上の部屋から落ち、ピンクは下の部屋から昇る。どちらも真ん中の穴だけを通る。透明な液体は抵抗として扱う
   // =========================================================
   const R = 14, SP = 6.2, SUB = 2;
   const K = 0.24, KN = 0.45, KC = 0.025;    // 圧力・近距離圧力・異色どうしの弱い反発
   const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
-  const GRAV = [0.0095, 0.0105];           // どちらも透明な液体より重くて沈む。B(ピンク)が少しだけ重い
+  const GRAV = [0.0095, -0.0095];          // A(青)は透明な液体より重くて沈む / B(ピンク)は軽くて昇る
   const DRAG = 0.972, VMAX = 6;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
   const MAXN = 1600;
   const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
   const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
   const VX = new Float32Array(MAXN), VY = new Float32Array(MAXN);
   const ROOM = new Uint8Array(MAXN);       // いる場所 0=上の部屋 1=真ん中 2=下の部屋(漏れ防止に使う)
-  const T = new Uint8Array(MAXN);           // 0=A(青) 1=B(ピンク・少し重い)
+  const T = new Uint8Array(MAXN);           // 0=A(青・沈む) 1=B(ピンク・昇る)
   let N = 0, rho0 = 1;
 
   const GW = Math.ceil(W / R) + 1, GH = Math.ceil(H / R) + 1;
   const cellStart = new Int32Array(GW * GH + 1), cellOf = new Int32Array(MAXN), sorted = new Int32Array(MAXN);
 
-  function plateTop(x) {            // 上の仕切りの高さ(下の仕切りは H - plateTop)
+  function plateTop(x) {            // 上の仕切りの上の斜面の高さ(下の仕切りの下の斜面は H - plateTop)
     const d = Math.abs(x - W / 2), hw = halfW(PLATE_Y) + 2;
     return d < HOLE ? PLATE_Y + PLATE_V : PLATE_Y + PLATE_V * (hw - d) / (hw - HOLE);
   }
-  function roomOf(x, y) {
-    const p = plateTop(x);
-    return y < p ? 0 : y > H - p ? 2 : 1;
+  function roomOf(x, y) {            // くさびの真ん中の高さで分ける(穴以外ではくさびの中に入れない)
+    return y < PLATE_Y + PLATE_V ? 0 : y > H - PLATE_Y - PLATE_V ? 2 : 1;
   }
   function init() {
     N = 0;
-    // 上の部屋を満タンに: V字の上にピンクを薄く、その上に青(写真と同じ重なり方)
-    {
-      const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
-      for (let y = PLATE_Y + PLATE_V - 4, row = 0; y > 3; y -= sp * 0.866, row++) {
+    // 青は上の部屋、ピンクは下の部屋に、それぞれ満タンに入れる(上下対称)
+    const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
+    for (const t of [0, 1]) {
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 3; yy -= sp * 0.866, row++) {
+        const y = t ? H - yy : yy;
         const lim = halfW(y) - 3;
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
-          const top = plateTop(x) - 4;
-          if (y > top || N >= MAXN) continue;
+          if (yy > plateTop(x) - 4 || N >= MAXN) continue;
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
-          VX[N] = VY[N] = 0; T[N] = top - y < (top - 3) * 0.45 ? 1 : 0; N++;   // 下の45%がピンク
+          VX[N] = VY[N] = 0; T[N] = t; N++;
         }
       }
     }
@@ -275,7 +280,7 @@
   // 透明な液体の中の小さな泡(見た目だけ)
   const NB = 10, BX = new Float32Array(NB), BY = new Float32Array(NB), BV = new Float32Array(NB),
         BS = new Float32Array(NB), BP = new Float32Array(NB);
-  const BLO = PLATE_Y + PLATE_V + 8, BHI = H - PLATE_Y - PLATE_V - 8;
+  const BLO = PLATE_Y + PLATE_V * 2 + 8, BHI = H - PLATE_Y - PLATE_V * 2 - 8;
   function initBubbles() {
     for (let i = 0; i < NB; i++) { BX[i] = 20 + Math.random() * (W - 40); BY[i] = BLO + Math.random() * (BHI - BLO);
       BV[i] = 0.05 + Math.random() * 0.08; BS[i] = 0.2 + Math.random() * 0.25; BP[i] = Math.random() * 6.28; }
@@ -463,17 +468,12 @@
     block(H, H + CAP, false, th.B[0]);
     // 仕切り板
     c.lineCap = 'round';
-    for (const [x1, y1, x2, y2] of SEG.slice(0, NPLATE)) {
-      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
-      c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 6; c.stroke();
-      c.strokeStyle = 'rgba(120,110,130,0.25)'; c.lineWidth = 1; c.stroke();
-    }
-    // 中央のノズル
-    for (const fl of [false, true]) {
-      const y = fl ? H - PLATE_Y - PLATE_V : PLATE_Y + PLATE_V, d = fl ? -1 : 1;
-      c.beginPath(); c.moveTo(W / 2 - HOLE, y); c.lineTo(W / 2 - HOLE + 1, y + 6 * d);
-      c.moveTo(W / 2 + HOLE, y); c.lineTo(W / 2 + HOLE - 1, y + 6 * d);
-      c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 2; c.stroke();
+    c.lineJoin = 'round';
+    for (const poly of PLATE_POLY) {
+      c.beginPath(); poly.forEach(([x, y], k) => k ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath();
+      c.fillStyle = 'rgba(255,255,255,0.6)'; c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineWidth = 3; c.stroke();
+      c.strokeStyle = 'rgba(130,110,135,0.45)'; c.lineWidth = 1; c.stroke();
     }
     // 輪郭とハイライト
     c.lineJoin = 'round';
@@ -586,33 +586,32 @@
     const lim = 16;
     fx = Math.max(-lim, Math.min(lim, fx)); fy = Math.max(-lim, Math.min(lim, fy));
     ax = -fx * 0.5 / SUB; ay = -fy * 0.5 / SUB;
-    // 上側のV字(じょうご)は真ん中のノズルだけ。青とピンクを半拍ずらして交互に通す
+    // 青は上の仕切りの穴から、ピンクは下の仕切りの穴から、半拍ずらして1滴ずつ出す
     dripT += 1 / 60;
-    const f = gby > 0.3 ? 0 : gby < -0.3 ? 1 : -1;   // じょうごになっている仕切り(0=容器の上側 1=下側)
-    // 1回に通すのは滴ひとつ分まで: ノズルの出口側にたまった量が DROP_N を超えたら、その回はもう閉じる
+    const f = gby > 0.3 ? 0 : gby < -0.3 ? 1 : -1;   // いま上側にある仕切り(0=容器の上側 1=下側)
     const phaseA = dripT % DRIP_PERIOD, phaseB = (dripT + DRIP_PERIOD / 2) % DRIP_PERIOD;
     if (phaseA < 1 / 60) dropDone[0] = false;
     if (phaseB < 1 / 60) dropDone[1] = false;
-    if (f >= 0) {
-      const ay0 = f ? H - PLATE_Y - PLATE_V : PLATE_Y + PLATE_V, dir = f ? -1 : 1;
-      const cnt = [0, 0];
-      for (let i = 0; i < N; i++) {
-        const d = (Y[i] - ay0) * dir;
-        if (d > 0 && d < 30 && Math.abs(X[i] - W / 2) < HOLE + 14) cnt[T[i]]++;
-      }
-      if (cnt[0] >= DROP_N) dropDone[0] = true;
-      if (cnt[1] >= DROP_N) dropDone[1] = true;
-    }
-    const openA = phaseA < DRIP_OPEN && !dropDone[0];
-    const openB = phaseB < DRIP_OPEN && !dropDone[1];
     if (f < 0) { lidMask.fill(3); nozY[0] = nozY[1] = -1; }   // 回転の途中は全部閉じる
     else {
-      const t = 1 - f;                                  // 山型になっている仕切り
-      lidMask[f] = (openA ? 0 : 1) | (openB ? 0 : 2);   // じょうごの中央: それぞれの番だけ通す
-      lidMask[t] = 0;                                   // 山型の頂点: 落ちてきた滴はそのまま通る
-      const inlet = (f ? H - PLATE_Y - PLATE_V + 8 : PLATE_Y + PLATE_V - 8);
-      nozY[0] = openA ? inlet : -1;
-      nozY[1] = openB ? inlet : -1;
+      const gs = f ? -1 : 1;                                     // 容器から見た「下」の向き
+      const yU = f ? H - PLATE_Y - PLATE_V : PLATE_Y + PLATE_V;  // 上側の仕切りの穴
+      const yL = f ? PLATE_Y + PLATE_V : H - PLATE_Y - PLATE_V;  // 下側の仕切りの穴
+      // 1回に出すのは滴ひとつ分まで: 穴の出口側にたまった量が DROP_N を超えたら、その回はもう閉じる
+      let cA = 0, cB = 0;
+      for (let i = 0; i < N; i++) {
+        if (Math.abs(X[i] - W / 2) > HOLE + 14) continue;
+        if (T[i] === 0) { const d = (Y[i] - yU) * gs; if (d > 0 && d < 30) cA++; }
+        else { const d = (yL - Y[i]) * gs; if (d > 0 && d < 30) cB++; }
+      }
+      if (cA >= DROP_N) dropDone[0] = true;
+      if (cB >= DROP_N) dropDone[1] = true;
+      const openA = phaseA < DRIP_OPEN && !dropDone[0];
+      const openB = phaseB < DRIP_OPEN && !dropDone[1];
+      lidMask[f] = openA ? 0 : 1;        // 上側の穴: 青は番のときだけ / ピンクはいつでも上へ
+      lidMask[1 - f] = openB ? 0 : 2;    // 下側の穴: ピンクは番のときだけ / 青はいつでも下へ
+      nozY[0] = openA ? yU - 8 * gs : -1;
+      nozY[1] = openB ? yL + 8 * gs : -1;
     }
     for (let s = 0; s < SUB; s++) substep();
     moveBubbles();
