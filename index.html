@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>シェイク・オイル</title>
+<style>
+  :root { --bg:#f3efe6; --fg:#2b2a27; --sub:#7a7468; --accent:#d9a521; --panel:#ffffffcc; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1c1a; --fg:#eeeae0; --sub:#a39d90; --panel:#2a2926cc; } }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    overflow:hidden; touch-action:none; user-select:none; -webkit-user-select:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; cursor:grab; }
+  canvas.drag { cursor:grabbing; }
+  #hud { position:fixed; top:12px; left:16px; right:16px; display:flex; justify-content:space-between;
+    align-items:flex-start; gap:12px; pointer-events:none; }
+  #hud h1 { margin:0; font-size:20px; letter-spacing:.05em; }
+  #hud p { margin:4px 0 0; font-size:13px; color:var(--sub); }
+  #meter { background:var(--panel); border-radius:12px; padding:8px 12px; min-width:150px; text-align:right;
+    backdrop-filter: blur(6px); }
+  #pct { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #bar { height:6px; border-radius:3px; background:#8884; overflow:hidden; margin-top:4px; }
+  #bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#4aa3df,var(--accent)); }
+  #best { font-size:12px; color:var(--sub); margin-top:4px; }
+  #msg { position:fixed; left:0; right:0; bottom:84px; text-align:center; font-size:22px; font-weight:700;
+    pointer-events:none; opacity:0; transition:opacity .3s; }
+  #btns { position:fixed; left:0; right:0; bottom:20px; display:flex; justify-content:center; gap:10px; }
+  button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #8886;
+    background:var(--panel); color:var(--fg); cursor:pointer; }
+  #sensor { display:none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div><h1>シェイク・オイル</h1><p>ボトルをつかんで振って、油と水を混ぜよう</p></div>
+  <div id="meter"><div>混ざり具合</div><div id="pct">0%</div><div id="bar"><i></i></div><div id="best">ベスト 0%</div></div>
+</div>
+<div id="msg"></div>
+<div id="btns"><button id="reset">リセット</button><button id="sensor">スマホを振って遊ぶ</button></div>
+<script>
+(() => {
+  // ---- シミュレーション設定(ボトル座標系, px) ----
+  const W = 200, H = 340;          // ボトル内寸
+  const R = 16;                    // 相互作用半径
+  const SP = 7.2;                  // 初期粒子間隔
+  const SUB = 3;                   // 1フレームあたりのサブステップ
+  const G = 0.09;                  // 重力 (px/step^2)
+  const K = 0.22, KN = 0.45;       // 圧力・近距離圧力
+  const KX = 0.03;                 // 油と水の反発(界面張力)
+  const OIL_M = 0.75, WATER_M = 1; // 質量(油は軽い→浮く)
+  const FILL = 0.66;               // 液量
+  const OIL_RATIO = 0.4;
+
+  let P = [];  // {x,y,px,py,vx,vy,t(0=水,1=油),m}
+  let rho0 = 1;
+
+  function init() {
+    P = [];
+    const fillH = H * FILL;
+    const oilH = fillH * OIL_RATIO;
+    for (let y = H - SP / 2; y > H - fillH; y -= SP * 0.866) {
+      const row = Math.round((H - y) / (SP * 0.866));
+      for (let x = SP / 2 + (row % 2) * SP / 2; x < W - SP / 4; x += SP) {
+        const t = (H - y) > fillH - oilH ? 1 : 0;
+        P.push({ x, y, px: x, py: y, vx: 0, vy: 0, t, m: t ? OIL_M : WATER_M });
+      }
+    }
+    // 静止密度を内部粒子から計算
+    const c = P[(P.length / 3) | 0];
+    let r = 0;
+    for (const q of P) {
+      const d = Math.hypot(q.x - c.x, q.y - c.y) / R;
+      if (d < 1 && q !== c) r += (1 - d) * (1 - d);
+    }
+    rho0 = r;
+    best = 0; mix = 0;
+  }
+
+  // 空間グリッド
+  const GW = Math.ceil(W / R) + 2, GH = Math.ceil(H / R) + 2;
+  let cells = Array.from({ length: GW * GH }, () => []);
+  function buildGrid() {
+    for (const c of cells) c.length = 0;
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i];
+      const cx = Math.min(GW - 1, Math.max(0, ((p.x / R) | 0) + 1));
+      const cy = Math.min(GH - 1, Math.max(0, ((p.y / R) | 0) + 1));
+      cells[cy * GW + cx].push(i);
+    }
+  }
+
+  let ax = 0, ay = 0; // ボトル座標系での慣性加速度 (px/step^2)
+  let mix = 0, best = 0;
+  const nbI = [], nbQ = [];
+
+  function step(computeMix) {
+    for (const p of P) {
+      p.vx += ax; p.vy += G + ay;
+      p.vx *= 0.998; p.vy *= 0.998;
+      p.px = p.x; p.py = p.y;
+      p.x += p.vx; p.y += p.vy;
+    }
+    buildGrid();
+    let mixSum = 0, mixN = 0;
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i];
+      const cx = Math.min(GW - 1, Math.max(0, ((p.x / R) | 0) + 1));
+      const cy = Math.min(GH - 1, Math.max(0, ((p.y / R) | 0) + 1));
+      nbI.length = 0; nbQ.length = 0;
+      let rho = 0, rhoN = 0, diff = 0;
+      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+        if (gy < 0 || gy >= GH) continue;
+        for (let gx = cx - 1; gx <= cx + 1; gx++) {
+          if (gx < 0 || gx >= GW) continue;
+          const cell = cells[gy * GW + gx];
+          for (let k = 0; k < cell.length; k++) {
+            const j = cell[k];
+            if (j === i) continue;
+            const q = P[j];
+            const dx = q.x - p.x, dy = q.y - p.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= R * R) continue;
+            const qq = Math.sqrt(d2) / R;
+            const a = 1 - qq;
+            rho += a * a; rhoN += a * a * a;
+            nbI.push(j); nbQ.push(qq);
+          }
+        }
+      }
+      const pr = K * (rho - rho0), prN = KN * rhoN;
+      for (let n = 0; n < nbI.length; n++) {
+        const q = P[nbI[n]];
+        const qq = nbQ[n], a = 1 - qq;
+        let dx = q.x - p.x, dy = q.y - p.y;
+        const d = Math.hypot(dx, dy) || 1e-4;
+        dx /= d; dy /= d;
+        let D = pr * a + prN * a * a;
+        if (q.t !== p.t) { D += KX * a; diff++; }
+        const wi = 1 / p.m, wj = 1 / q.m, s = D / (wi + wj);
+        p.x -= dx * s * wi; p.y -= dy * s * wi;
+        q.x += dx * s * wj; q.y += dy * s * wj;
+      }
+      if (computeMix && nbI.length) { mixSum += diff / nbI.length; mixN++; }
+    }
+    // 壁
+    const m = 2;
+    for (const p of P) {
+      if (p.x < m) p.x = m + Math.random() * 0.01; else if (p.x > W - m) p.x = W - m - Math.random() * 0.01;
+      if (p.y < m) p.y = m + Math.random() * 0.01; else if (p.y > H - m) p.y = H - m - Math.random() * 0.01;
+      p.vx = p.x - p.px; p.vy = p.y - p.py;
+      const v = Math.hypot(p.vx, p.vy), vmax = 6;
+      if (v > vmax) { p.vx *= vmax / v; p.vy *= vmax / v; }
+    }
+    if (computeMix) {
+      // 理想混合での異種隣接率 ~ 2f(1-f)
+      const ideal = 2 * OIL_RATIO * (1 - OIL_RATIO);
+      return Math.min(1, (mixSum / Math.max(1, mixN)) / ideal);
+    }
+  }
+
+  // ---- 入力(ボトルをドラッグ) ----
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  let vw = 0, vh = 0, scale = 1, dpr = 1;
+  let home = { x: 0, y: 0 };
+  let bx = 0, by = 0, bvx = 0, bvy = 0, tx = 0, ty = 0;
+  let dragging = false, grabDX = 0, grabDY = 0;
+  let sensorA = { x: 0, y: 0 };
+
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    vw = innerWidth; vh = innerHeight;
+    cv.width = vw * dpr; cv.height = vh * dpr;
+    scale = Math.min(vw / (W * 1.9), (vh - 230) / (H + 120));
+    home = { x: vw / 2, y: 90 + (vh - 230) / 2 + 55 * scale };
+    if (!dragging) { bx = tx = home.x; by = ty = home.y; }
+  }
+  addEventListener('resize', resize);
+
+  function bottleHit(x, y) {
+    const lx = (x - bx) / scale, ly = (y - by) / scale;
+    return Math.abs(lx) < W / 2 + 30 && ly > -H / 2 - 90 && ly < H / 2 + 20;
+  }
+  cv.addEventListener('pointerdown', e => {
+    dragging = true; cv.classList.add('drag');
+    cv.setPointerCapture(e.pointerId);
+    if (bottleHit(e.clientX, e.clientY)) { grabDX = bx - e.clientX; grabDY = by - e.clientY; }
+    else { grabDX = 0; grabDY = 0; }
+    tx = e.clientX + grabDX; ty = e.clientY + grabDY;
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    tx = e.clientX + grabDX; ty = e.clientY + grabDY;
+  });
+  const up = () => { dragging = false; cv.classList.remove('drag'); };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', up);
+
+  // スマホのモーションセンサー
+  const sBtn = document.getElementById('sensor');
+  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-block';
+  let sensorOn = false;
+  sBtn.addEventListener('click', async () => {
+    try {
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        const r = await DeviceMotionEvent.requestPermission();
+        if (r !== 'granted') return;
+      }
+      if (!sensorOn) {
+        addEventListener('devicemotion', e => {
+          const a = e.acceleration;
+          if (!a || a.x == null) return;
+          sensorA.x = a.x; sensorA.y = -a.y;
+        });
+        sensorOn = true;
+        sBtn.textContent = 'センサーON';
+      }
+    } catch (_) {}
+  });
+
+  document.getElementById('reset').addEventListener('click', init);
+
+  // ---- 描画 ----
+  const pctEl = document.getElementById('pct'), barEl = document.querySelector('#bar i'),
+        bestEl = document.getElementById('best'), msgEl = document.getElementById('msg');
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+
+  function bottlePath(c) {
+    const w = W / 2 + 6, top = -H / 2 - 6, bot = H / 2 + 6, r = 26, nw = 34, sh = 50;
+    c.beginPath();
+    c.moveTo(-nw, top - sh - 30);
+    c.lineTo(-nw, top - sh);
+    c.quadraticCurveTo(-w, top - sh + 8, -w, top + 10);
+    c.lineTo(-w, bot - r);
+    c.quadraticCurveTo(-w, bot, -w + r, bot);
+    c.lineTo(w - r, bot);
+    c.quadraticCurveTo(w, bot, w, bot - r);
+    c.lineTo(w, top + 10);
+    c.quadraticCurveTo(w, top - sh + 8, nw, top - sh);
+    c.lineTo(nw, top - sh - 30);
+    c.closePath();
+  }
+
+  function draw(tilt) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, vw, vh);
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(tilt);
+    ctx.scale(scale, scale);
+
+    // 影
+    ctx.fillStyle = dark.matches ? '#0005' : '#0001';
+    ctx.beginPath(); ctx.ellipse(0, H / 2 + 20, W / 2 + 10, 10, 0, 0, Math.PI * 2); ctx.fill();
+
+    // ガラス
+    bottlePath(ctx);
+    ctx.fillStyle = dark.matches ? '#ffffff10' : '#ffffff80';
+    ctx.fill();
+
+    // 液体
+    ctx.save();
+    bottlePath(ctx); ctx.clip();
+    ctx.translate(-W / 2, -H / 2);
+    const rr = R * 0.6;
+    ctx.fillStyle = '#5fb0e8';
+    ctx.beginPath();
+    for (const p of P) if (!p.t) { ctx.moveTo(p.x + rr, p.y); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); }
+    ctx.fill();
+    ctx.fillStyle = '#e8b62a';
+    ctx.beginPath();
+    const ro = R * 0.42;
+    for (const p of P) if (p.t) { ctx.moveTo(p.x + ro, p.y); ctx.arc(p.x, p.y, ro, 0, Math.PI * 2); }
+    ctx.fill();
+    ctx.restore();
+
+    // ガラスのふち・ハイライト
+    bottlePath(ctx);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = dark.matches ? '#ffffff55' : '#00000030';
+    ctx.stroke();
+    ctx.strokeStyle = '#ffffff90'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-W / 2 + 14, -H / 2 + 30); ctx.lineTo(-W / 2 + 14, H / 2 - 40); ctx.stroke();
+
+    // キャップ
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath(); ctx.roundRect(-40, -H / 2 - 6 - 50 - 52, 80, 30, 6); ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- メインループ ----
+  let frame = 0, prevBvx = 0, prevBvy = 0, shownMix = 0;
+  function loop() {
+    // ボトルを目標位置へバネで追従(離すとホームへ戻る)
+    if (!dragging) { tx = home.x; ty = home.y; }
+    const k = dragging ? 0.6 : 0.15;
+    const nvx = (tx - bx) * k, nvy = (ty - by) * k;
+    bvx = nvx; bvy = nvy;
+    bx += bvx; by += bvy;
+    // 画面上の加速度 → ボトル座標系の慣性力
+    let fax = (bvx - prevBvx) / scale, fay = (bvy - prevBvy) / scale;
+    prevBvx = bvx; prevBvy = bvy;
+    fax += sensorA.x * 0.25; fay += sensorA.y * 0.25;
+    const lim = 18;
+    fax = Math.max(-lim, Math.min(lim, fax)); fay = Math.max(-lim, Math.min(lim, fay));
+    ax = -fax * 0.6 / SUB; ay = -fay * 0.6 / SUB;
+
+    for (let s = 0; s < SUB; s++) {
+      const r = step(s === SUB - 1 && frame % 4 === 0);
+      if (r !== undefined) mix = r;
+    }
+    frame++;
+    shownMix += (mix - shownMix) * 0.2;
+    const pc = Math.round(shownMix * 100);
+    if (pc > best) best = pc;
+    pctEl.textContent = pc + '%';
+    barEl.style.width = pc + '%';
+    bestEl.textContent = 'ベスト ' + best + '%';
+    let m = '';
+    if (pc >= 85) m = '🎉 完全に混ざった!ドレッシング完成';
+    else if (pc >= 60) m = 'いい感じ!もっと振って!';
+    else if (best >= 60 && pc < 30) m = 'あっ…また分離してきた';
+    msgEl.textContent = m; msgEl.style.opacity = m ? 1 : 0;
+
+    draw(Math.max(-0.25, Math.min(0.25, bvx * 0.01)));
+    requestAnimationFrame(loop);
+  }
+
+  resize(); init();
+  // テスト用フック
+  window.__shake = { P: () => P, step, setA: (x, y) => { ax = x; ay = y; }, mix: () => mix };
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
