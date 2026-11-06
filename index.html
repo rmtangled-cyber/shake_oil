@@ -215,7 +215,7 @@
     for (let i = 0; i < N; i++) {
       let g = GRAV[T[i]];
       const nz = nozY[T[i]];
-      if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 4;
+      if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 2;
       const vx = (VX[i] + gbx * g + ax) * DRAG, vy = (VY[i] + gby * g + ay) * DRAG;
       PX[i] = X[i]; PY[i] = Y[i];
       X[i] += vx; Y[i] += vy;
@@ -237,6 +237,8 @@
             if (d2 >= R2 || n >= 256) continue;
             // 青とピンクは奥行きが違うので、お互いに押し合わずにすれ違う(同じ色どうしだけ計算する)
             if (T[j] !== ti) continue;
+            // 仕切りの向こう側(別の部屋)の液とは引っぱり合わない: 出た滴が穴へ引き戻されない
+            if (ROOM[j] !== ROOM[i]) continue;
             const q = Math.sqrt(d2) / R, a = 1 - q;
             rho += a * a; rhoN += a * a * a; ws += a; wx += a * X[j]; wy += a * Y[j];
             nbJ[n] = j; nbQ[n] = q; n++;
