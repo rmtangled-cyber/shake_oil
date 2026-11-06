@@ -53,7 +53,7 @@
   const W = 200, H = 420;
   const WAIST = 16;                         // ゆるいくびれ
   const CAP = 46, SIDE = 11;                // 上下ブロックと側面の厚み
-  const PLATE_Y = 84, PLATE_V = 38;         // 仕切り: 壁際の高さとV字の深さ
+  const PLATE_Y = 34, PLATE_V = 26;         // 仕切り: 壁際の高さとV字の深さ(たまる部屋は小さく、滴の通り道を広く)
   const HOLE = 11;                          // 中央の穴の半幅(液が通れるのはここだけ)
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
@@ -135,7 +135,7 @@
           const top = plateTop(x) - 4;
           if (y > top || N >= MAXN) continue;
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
-          VX[N] = VY[N] = 0; T[N] = top - y < 50 ? 1 : 0; N++;
+          VX[N] = VY[N] = 0; T[N] = top - y < (top - 3) * 0.45 ? 1 : 0; N++;   // 下の45%がピンク
         }
       }
     }
@@ -568,7 +568,7 @@
   // メインループ(物理は60Hz固定、描画は端末のリフレッシュレート)
   // =========================================================
   const fpsEl = document.getElementById('fps');
-  const DROP_N = 16, dropDone = [false, false];
+  const DROP_N = 12, dropDone = [false, false];
   let dripT = 0, last = performance.now(), acc = 0, pvx = 0, pvy = 0, fpsT = 0, fpsN = 0, simMs = 0;
   function tick() {
     if (!dragging) { tx = homeX; ty = homeY; }
