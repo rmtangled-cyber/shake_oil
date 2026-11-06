@@ -2,334 +2,476 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f7dfe8">
 <title>シェイク・オイル</title>
 <style>
-  :root { --bg:#f3efe6; --fg:#2b2a27; --sub:#7a7468; --accent:#d9a521; --panel:#ffffffcc; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#1d1c1a; --fg:#eeeae0; --sub:#a39d90; --panel:#2a2926cc; } }
+  :root { --fg:#4a3a48; --sub:#9a8394; --panel:#ffffffaa; }
   * { box-sizing:border-box; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+  html,body { margin:0; height:100%; color:var(--fg);
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    overflow:hidden; touch-action:none; user-select:none; -webkit-user-select:none; }
-  canvas { position:fixed; inset:0; width:100%; height:100%; cursor:grab; }
-  canvas.drag { cursor:grabbing; }
-  #hud { position:fixed; top:12px; left:16px; right:16px; display:flex; justify-content:space-between;
-    align-items:flex-start; gap:12px; pointer-events:none; }
-  #hud h1 { margin:0; font-size:20px; letter-spacing:.05em; }
-  #hud p { margin:4px 0 0; font-size:13px; color:var(--sub); }
-  #meter { background:var(--panel); border-radius:12px; padding:8px 12px; min-width:150px; text-align:right;
-    backdrop-filter: blur(6px); }
-  #pct { font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; }
-  #bar { height:6px; border-radius:3px; background:#8884; overflow:hidden; margin-top:4px; }
-  #bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#4aa3df,var(--accent)); }
-  #best { font-size:12px; color:var(--sub); margin-top:4px; }
-  #msg { position:fixed; left:0; right:0; bottom:84px; text-align:center; font-size:22px; font-weight:700;
-    pointer-events:none; opacity:0; transition:opacity .3s; }
-  #btns { position:fixed; left:0; right:0; bottom:20px; display:flex; justify-content:center; gap:10px; }
-  button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #8886;
-    background:var(--panel); color:var(--fg); cursor:pointer; }
+    overflow:hidden; touch-action:none; user-select:none; -webkit-user-select:none;
+    -webkit-tap-highlight-color: transparent; }
+  body { background:
+      radial-gradient(60vmax 50vmax at 85% 30%, #ffd3e4 0%, transparent 60%),
+      radial-gradient(50vmax 40vmax at 10% 80%, #ffe6ef 0%, transparent 60%),
+      radial-gradient(40vmax 30vmax at 80% 90%, #e9dcff 0%, transparent 60%),
+      linear-gradient(180deg, #fff6f8 0%, #fbe3ec 100%); }
+  .bokeh { position:fixed; border-radius:50%; filter: blur(18px); opacity:.55; pointer-events:none; }
+  #stage { position:fixed; inset:0; }
+  #bottle { position:absolute; left:0; top:0; will-change:transform; transform-origin: 50% 60%; }
+  #bottle canvas { position:absolute; display:block; }
+  #hud { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:16px; right:16px; display:flex;
+    justify-content:space-between; align-items:center; pointer-events:none; }
+  #hud h1 { margin:0; font-size:17px; font-weight:600; letter-spacing:.08em; }
+  #meter { background:var(--panel); border-radius:14px; padding:6px 12px; text-align:right;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); min-width:110px; }
+  #meter small { font-size:11px; color:var(--sub); display:block; }
+  #pct { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #btns { position:fixed; left:0; right:0; bottom:calc(16px + env(safe-area-inset-bottom));
+    display:flex; justify-content:center; gap:10px; }
+  button { font:inherit; font-size:14px; padding:10px 18px; border-radius:999px; border:1px solid #ffffff;
+    background:var(--panel); color:var(--fg); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   #sensor { display:none; }
+  #fps { position:fixed; left:8px; bottom:4px; font-size:10px; color:var(--sub); }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hud">
-  <div><h1>シェイク・オイル</h1><p>ボトルをつかんで振って、油と水を混ぜよう</p></div>
-  <div id="meter"><div>混ざり具合</div><div id="pct">0%</div><div id="bar"><i></i></div><div id="best">ベスト 0%</div></div>
+<div class="bokeh" style="width:160px;height:160px;left:-40px;top:22%;background:#ffc4da"></div>
+<div class="bokeh" style="width:110px;height:110px;right:-20px;top:62%;background:#d9c8ff"></div>
+<div class="bokeh" style="width:80px;height:80px;right:12%;top:8%;background:#fff"></div>
+<div id="stage">
+  <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
 </div>
-<div id="msg"></div>
+<div id="hud">
+  <h1>シェイク・オイル</h1>
+  <div id="meter"><small>混ざり具合</small><span id="pct">0%</span></div>
+</div>
 <div id="btns"><button id="reset">リセット</button><button id="sensor">スマホを振って遊ぶ</button></div>
+<div id="fps"></div>
 <script>
 (() => {
-  // ---- シミュレーション設定(ボトル座標系, px) ----
-  const W = 200, H = 340;          // ボトル内寸
-  const R = 16;                    // 相互作用半径
-  const SP = 7.2;                  // 初期粒子間隔
-  const SUB = 3;                   // 1フレームあたりのサブステップ
-  const G = 0.09;                  // 重力 (px/step^2)
-  const K = 0.22, KN = 0.45;       // 圧力・近距離圧力
-  const KX = 0.03;                 // 油と水の反発(界面張力)
-  const OIL_M = 0.75, WATER_M = 1; // 質量(油は軽い→浮く)
-  const FILL = 0.66;               // 液量
-  const OIL_RATIO = 0.4;
+  'use strict';
+  // =========================================================
+  // 容器の形(ワールド座標, 単位 = 論理px)
+  // =========================================================
+  const W = 200, H = 400;           // 液体が入る内寸
+  const WAIST = 30;                 // くびれの深さ
+  const CAP_T = 46, CAP_B = 40, SIDE = 12; // ガラス(アクリル)の厚み
+  function halfW(y) {
+    const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
+    return W / 2 - WAIST * s * Math.sqrt(s);
+  }
 
-  let P = [];  // {x,y,px,py,vx,vy,t(0=水,1=油),m}
-  let rho0 = 1;
+  // =========================================================
+  // 物理(粒子法: double density relaxation)
+  // 青 = 軽い液体(上へ浮く) / ピンク = 重い液体(下へ沈む)
+  // 透明な液体は粒子を持たず、抵抗と浮力として扱う
+  // =========================================================
+  const R = 15, SP = 6.6, SUB = 2;
+  const K = 0.22, KN = 0.42, KX = 0.06;
+  const BUOY = 0.016, DRAG = 0.982, VMAX = 7;
+  const MAXN = 1200;
+  const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
+  const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
+  const VX = new Float32Array(MAXN), VY = new Float32Array(MAXN);
+  const T = new Uint8Array(MAXN); // 0=青 1=ピンク
+  let N = 0, rho0 = 1, sep0 = 1;
 
-  function init() {
-    P = [];
-    const fillH = H * FILL;
-    const oilH = fillH * OIL_RATIO;
-    for (let y = H - SP / 2; y > H - fillH; y -= SP * 0.866) {
-      const row = Math.round((H - y) / (SP * 0.866));
-      for (let x = SP / 2 + (row % 2) * SP / 2; x < W - SP / 4; x += SP) {
-        const t = (H - y) > fillH - oilH ? 1 : 0;
-        P.push({ x, y, px: x, py: y, vx: 0, vy: 0, t, m: t ? OIL_M : WATER_M });
+  const GW = Math.ceil(W / R) + 1, GH = Math.ceil(H / R) + 1;
+  const cellStart = new Int32Array(GW * GH + 1), cellOf = new Int32Array(MAXN), sorted = new Int32Array(MAXN);
+
+  function fillLayer(y0, y1, type) {
+    for (let y = y0, row = 0; y < y1; y += SP * 0.866, row++) {
+      const lim = halfW(y) - 3;
+      for (let x = W / 2 - lim + (row & 1) * SP / 2; x <= W / 2 + lim; x += SP) {
+        if (N >= MAXN) return;
+        X[N] = PX[N] = x + (Math.random() - .5) * .2; Y[N] = PY[N] = y;
+        VX[N] = VY[N] = 0; T[N] = type; N++;
       }
     }
-    // 静止密度を内部粒子から計算
-    const c = P[(P.length / 3) | 0];
+  }
+  function init() {
+    N = 0;
+    fillLayer(3, H * 0.2, 0);
+    fillLayer(H * 0.8, H - 3, 1);
+    // 静止密度
+    let best = 0;
+    const cx = W / 2, cy = H * 0.9;
+    for (let i = 0; i < N; i++) if (Math.hypot(X[i] - cx, Y[i] - cy) < Math.hypot(X[best] - cx, Y[best] - cy)) best = i;
     let r = 0;
-    for (const q of P) {
-      const d = Math.hypot(q.x - c.x, q.y - c.y) / R;
-      if (d < 1 && q !== c) r += (1 - d) * (1 - d);
+    for (let j = 0; j < N; j++) {
+      if (j === best) continue;
+      const q = Math.hypot(X[j] - X[best], Y[j] - Y[best]) / R;
+      if (q < 1) r += (1 - q) * (1 - q);
     }
-    rho0 = r;
-    best = 0; mix = 0;
+    rho0 = r * 1.0;
+    sep0 = avgSep();
+  }
+  function avgSep() {
+    let yb = 0, yp = 0, nb = 0, np = 0;
+    for (let i = 0; i < N; i++) if (T[i]) { yp += Y[i]; np++; } else { yb += Y[i]; nb++; }
+    return yp / np - yb / nb;
   }
 
-  // 空間グリッド
-  const GW = Math.ceil(W / R) + 2, GH = Math.ceil(H / R) + 2;
-  let cells = Array.from({ length: GW * GH }, () => []);
   function buildGrid() {
-    for (const c of cells) c.length = 0;
-    for (let i = 0; i < P.length; i++) {
-      const p = P[i];
-      const cx = Math.min(GW - 1, Math.max(0, ((p.x / R) | 0) + 1));
-      const cy = Math.min(GH - 1, Math.max(0, ((p.y / R) | 0) + 1));
-      cells[cy * GW + cx].push(i);
+    cellStart.fill(0);
+    for (let i = 0; i < N; i++) {
+      let cx = (X[i] / R) | 0, cy = (Y[i] / R) | 0;
+      if (cx < 0) cx = 0; else if (cx >= GW) cx = GW - 1;
+      if (cy < 0) cy = 0; else if (cy >= GH) cy = GH - 1;
+      const c = cy * GW + cx; cellOf[i] = c; cellStart[c + 1]++;
     }
+    for (let c = 0; c < GW * GH; c++) cellStart[c + 1] += cellStart[c];
+    const fillPos = cellStart.slice(0, GW * GH);
+    for (let i = 0; i < N; i++) sorted[fillPos[cellOf[i]]++] = i;
   }
 
-  let ax = 0, ay = 0; // ボトル座標系での慣性加速度 (px/step^2)
-  let mix = 0, best = 0;
-  const nbI = [], nbQ = [];
+  let gX = 0, gY = 1;       // 重力方向(センサーで傾けられる)
+  let ax = 0, ay = 0;       // 振ったときの慣性加速度
+  const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
+  const R2 = R * R;
 
-  function step(computeMix) {
-    for (const p of P) {
-      p.vx += ax; p.vy += G + ay;
-      p.vx *= 0.998; p.vy *= 0.998;
-      p.px = p.x; p.py = p.y;
-      p.x += p.vx; p.y += p.vy;
+  function substep() {
+    for (let i = 0; i < N; i++) {
+      const b = T[i] ? BUOY : -BUOY;
+      let vx = (VX[i] + gX * b + ax) * DRAG, vy = (VY[i] + gY * b + ay) * DRAG;
+      PX[i] = X[i]; PY[i] = Y[i];
+      X[i] += vx; Y[i] += vy;
     }
     buildGrid();
-    let mixSum = 0, mixN = 0;
-    for (let i = 0; i < P.length; i++) {
-      const p = P[i];
-      const cx = Math.min(GW - 1, Math.max(0, ((p.x / R) | 0) + 1));
-      const cy = Math.min(GH - 1, Math.max(0, ((p.y / R) | 0) + 1));
-      nbI.length = 0; nbQ.length = 0;
-      let rho = 0, rhoN = 0, diff = 0;
+    for (let i = 0; i < N; i++) {
+      const xi = X[i], yi = Y[i], ti = T[i];
+      const c = cellOf[i], cx = c % GW, cy = (c / GW) | 0;
+      let rho = 0, rhoN = 0, n = 0;
       for (let gy = cy - 1; gy <= cy + 1; gy++) {
         if (gy < 0 || gy >= GH) continue;
         for (let gx = cx - 1; gx <= cx + 1; gx++) {
           if (gx < 0 || gx >= GW) continue;
-          const cell = cells[gy * GW + gx];
-          for (let k = 0; k < cell.length; k++) {
-            const j = cell[k];
+          const cc = gy * GW + gx;
+          for (let k = cellStart[cc], e = cellStart[cc + 1]; k < e; k++) {
+            const j = sorted[k];
             if (j === i) continue;
-            const q = P[j];
-            const dx = q.x - p.x, dy = q.y - p.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 >= R * R) continue;
-            const qq = Math.sqrt(d2) / R;
-            const a = 1 - qq;
-            rho += a * a; rhoN += a * a * a;
-            nbI.push(j); nbQ.push(qq);
+            const dx = X[j] - xi, dy = Y[j] - yi, d2 = dx * dx + dy * dy;
+            if (d2 >= R2 || n >= 256) continue;
+            const q = Math.sqrt(d2) / R, a = 1 - q;
+            if (T[j] === ti) { rho += a * a; rhoN += a * a * a; }
+            nbJ[n] = j; nbQ[n] = q; n++;
           }
         }
       }
       const pr = K * (rho - rho0), prN = KN * rhoN;
-      for (let n = 0; n < nbI.length; n++) {
-        const q = P[nbI[n]];
-        const qq = nbQ[n], a = 1 - qq;
-        let dx = q.x - p.x, dy = q.y - p.y;
-        const d = Math.hypot(dx, dy) || 1e-4;
+      let sx = 0, sy = 0;
+      for (let m = 0; m < n; m++) {
+        const j = nbJ[m], q = nbQ[m], a = 1 - q;
+        let dx = X[j] - X[i], dy = Y[j] - Y[i];
+        const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
         dx /= d; dy /= d;
-        let D = pr * a + prN * a * a;
-        if (q.t !== p.t) { D += KX * a; diff++; }
-        const wi = 1 / p.m, wj = 1 / q.m, s = D / (wi + wj);
-        p.x -= dx * s * wi; p.y -= dy * s * wi;
-        q.x += dx * s * wj; q.y += dy * s * wj;
+        // 同じ液体同士: 圧力+表面張力 / 違う液体同士: 反発のみ
+        const D = T[j] === ti ? (pr * a + prN * a * a) * 0.5 : (KX * a + KN * 0.5 * a * a) * 0.5;
+        X[j] += dx * D; Y[j] += dy * D;
+        sx -= dx * D; sy -= dy * D;
       }
-      if (computeMix && nbI.length) { mixSum += diff / nbI.length; mixN++; }
+      X[i] += sx; Y[i] += sy;
     }
-    // 壁
-    const m = 2;
-    for (const p of P) {
-      if (p.x < m) p.x = m + Math.random() * 0.01; else if (p.x > W - m) p.x = W - m - Math.random() * 0.01;
-      if (p.y < m) p.y = m + Math.random() * 0.01; else if (p.y > H - m) p.y = H - m - Math.random() * 0.01;
-      p.vx = p.x - p.px; p.vy = p.y - p.py;
-      const v = Math.hypot(p.vx, p.vy), vmax = 6;
-      if (v > vmax) { p.vx *= vmax / v; p.vy *= vmax / v; }
-    }
-    if (computeMix) {
-      // 理想混合での異種隣接率 ~ 2f(1-f)
-      const ideal = 2 * OIL_RATIO * (1 - OIL_RATIO);
-      return Math.min(1, (mixSum / Math.max(1, mixN)) / ideal);
+    const m = 2.5;
+    for (let i = 0; i < N; i++) {
+      let x = X[i], y = Y[i];
+      if (y < m) y = m; else if (y > H - m) y = H - m;
+      const lim = halfW(y) - m;
+      if (x < W / 2 - lim) x = W / 2 - lim; else if (x > W / 2 + lim) x = W / 2 + lim;
+      X[i] = x; Y[i] = y;
+      let vx = x - PX[i], vy = y - PY[i];
+      const v2 = vx * vx + vy * vy;
+      if (v2 > VMAX * VMAX) { const s = VMAX / Math.sqrt(v2); vx *= s; vy *= s; }
+      VX[i] = vx; VY[i] = vy;
     }
   }
 
-  // ---- 入力(ボトルをドラッグ) ----
-  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-  let vw = 0, vh = 0, scale = 1, dpr = 1;
-  let home = { x: 0, y: 0 };
-  let bx = 0, by = 0, bvx = 0, bvy = 0, tx = 0, ty = 0;
-  let dragging = false, grabDX = 0, grabDY = 0;
-  let sensorA = { x: 0, y: 0 };
+  // =========================================================
+  // 描画(WebGL)
+  //   1) 粒子をぼかした点として「濃度テクスチャ」に加算 (青=R, ピンク=G)
+  //   2) 濃度をしきい値で切って、なめらかな液体の形+光沢を付ける
+  // =========================================================
+  const glCv = document.getElementById('gl');
+  const gl = glCv.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: false });
+  function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+  function prog(vs, fs) { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
 
+  const splatP = prog(`
+    attribute vec3 a; uniform vec2 uSize; uniform float uPt; varying float vT;
+    void main(){ vT = a.z; gl_Position = vec4(a.x/uSize.x*2.-1., 1.-a.y/uSize.y*2., 0., 1.); gl_PointSize = uPt; }`,
+  `precision mediump float; varying float vT;
+    void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p,p); if(r2>1.) discard;
+      float v = 1.-r2; v = v*v*v*0.58;
+      gl_FragColor = vT < .5 ? vec4(v,0.,0.,0.) : vec4(0.,v,0.,0.); }`);
+
+  const compP = prog(`
+    attribute vec2 a; varying vec2 vUv;
+    void main(){ vUv = a*.5+.5; gl_Position = vec4(a,0.,1.); }`,
+  `precision mediump float;
+    varying vec2 vUv; uniform sampler2D uF; uniform vec2 uTx; uniform vec2 uSize; uniform float uWaist;
+    float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*sqrt(s); }
+    void main(){
+      vec2 w = vec2(vUv.x*uSize.x, (1.-vUv.y)*uSize.y);
+      float edge = halfW(w.y) - abs(w.x-uSize.x*.5);
+      if(edge < 0.) discard;
+      vec4 c = texture2D(uF, vUv);
+      const float TH = .5;
+      float ab = smoothstep(TH-.07, TH+.07, c.r);
+      float ap = smoothstep(TH-.07, TH+.07, c.g);
+      float a = max(ab, ap);
+      if(a < .003) discard;
+      // 表面の傾き(濃度の勾配)から法線を作る
+      float l = dot(texture2D(uF, vUv-vec2(uTx.x,0.)).rg, vec2(1.));
+      float r = dot(texture2D(uF, vUv+vec2(uTx.x,0.)).rg, vec2(1.));
+      float d = dot(texture2D(uF, vUv-vec2(0.,uTx.y)).rg, vec2(1.));
+      float u = dot(texture2D(uF, vUv+vec2(0.,uTx.y)).rg, vec2(1.));
+      vec3 n = normalize(vec3((l-r)*2.2, (d-u)*2.2, 1.));
+      float tb = clamp((c.r-TH)*2.2, 0., 1.), tp = clamp((c.g-TH)*2.2, 0., 1.);
+      vec3 blue = mix(vec3(.22,.48,1.), vec3(.03,.12,.80), tb);
+      vec3 pink = mix(vec3(1.,.50,.78), vec3(.95,.12,.52), tp);
+      // 半透明の液体が重なると色が掛け合わさって濃くなる
+      vec3 col = mix(vec3(1.), blue, ab) * mix(vec3(1.), pink, ap);
+      vec3 L = normalize(vec3(-.45,.6,.75));
+      col *= .78 + .32*(dot(n,L)*.5+.5);
+      float rim = 1.-n.z;
+      col = mix(col, col*col, rim*.6);
+      vec3 Hh = normalize(L+vec3(0.,0.,1.));
+      float sp = pow(max(dot(n,Hh),0.), 60.)*.9 + pow(max(dot(n,Hh),0.), 8.)*.08;
+      col += sp;
+      float alpha = a * mix(.82, .97, max(tb,tp));
+      gl_FragColor = vec4(col*alpha, alpha);
+    }`);
+
+  const pBuf = gl.createBuffer(), qBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const pData = new Float32Array(MAXN * 3);
+  gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, pData.byteLength, gl.DYNAMIC_DRAW);
+
+  let fTex = null, fFbo = null, fW = 1, fH = 1;
+  function makeField(w, h) {
+    if (fTex) { gl.deleteTexture(fTex); gl.deleteFramebuffer(fFbo); }
+    fW = w; fH = h;
+    fTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, fTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    fFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fTex, 0);
+  }
+
+  const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt') };
+  const uC = { f: gl.getUniformLocation(compP, 'uF'), tx: gl.getUniformLocation(compP, 'uTx'),
+               size: gl.getUniformLocation(compP, 'uSize'), waist: gl.getUniformLocation(compP, 'uWaist') };
+  const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
+
+  function render() {
+    for (let i = 0; i < N; i++) { pData[i*3] = X[i]; pData[i*3+1] = Y[i]; pData[i*3+2] = T[i]; }
+    // 1) 濃度
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fFbo);
+    gl.viewport(0, 0, fW, fH);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    gl.useProgram(splatP);
+    gl.uniform2f(uS.size, W, H);
+    gl.uniform1f(uS.pt, R * 2.0 * fW / W);
+    gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, pData.subarray(0, N * 3));
+    gl.enableVertexAttribArray(aS);
+    gl.vertexAttribPointer(aS, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, N);
+    gl.disableVertexAttribArray(aS);
+    // 2) 合成
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, glCv.width, glCv.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(compP);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fTex);
+    gl.uniform1i(uC.f, 0);
+    gl.uniform2f(uC.tx, 1.5 / fW, 1.5 / fH);
+    gl.uniform2f(uC.size, W, H);
+    gl.uniform1f(uC.waist, WAIST);
+    gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
+    gl.enableVertexAttribArray(aC);
+    gl.vertexAttribPointer(aC, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disableVertexAttribArray(aC);
+  }
+
+  // =========================================================
+  // ガラス(静止画として一度だけ描く)
+  // =========================================================
+  const glassCv = document.getElementById('glass'), gx2 = glassCv.getContext('2d');
+  const bottleEl = document.getElementById('bottle');
+  function drawGlass(scale, dpr) {
+    const ow = W + SIDE * 2, oh = H + CAP_T + CAP_B;
+    glassCv.width = Math.round(ow * scale * dpr); glassCv.height = Math.round(oh * scale * dpr);
+    glassCv.style.width = ow * scale + 'px'; glassCv.style.height = oh * scale + 'px';
+    glassCv.style.left = '0px'; glassCv.style.top = '0px';
+    const c = gx2;
+    c.setTransform(scale * dpr, 0, 0, scale * dpr, SIDE * scale * dpr, CAP_T * scale * dpr);
+    c.clearRect(-SIDE, -CAP_T, ow, oh);
+    // 外側の輪郭(くびれ付き)
+    const outer = new Path2D();
+    const steps = 48;
+    outer.moveTo(W / 2 - halfW(0) - SIDE + 8, -CAP_T);
+    for (let i = 0; i <= steps; i++) { const y = H * i / steps; outer.lineTo(W / 2 - halfW(y) - SIDE, y); }
+    outer.lineTo(W / 2 - halfW(H) - SIDE + 6, H + CAP_B);
+    outer.lineTo(W / 2 + halfW(H) + SIDE - 6, H + CAP_B);
+    for (let i = steps; i >= 0; i--) { const y = H * i / steps; outer.lineTo(W / 2 + halfW(y) + SIDE, y); }
+    outer.lineTo(W / 2 + halfW(0) + SIDE - 8, -CAP_T);
+    outer.closePath();
+    const inner = new Path2D();
+    for (let i = 0; i <= steps; i++) { const y = H * i / steps; inner[i ? 'lineTo' : 'moveTo'](W / 2 - halfW(y), y); }
+    for (let i = steps; i >= 0; i--) { const y = H * i / steps; inner.lineTo(W / 2 + halfW(y), y); }
+    inner.closePath();
+
+    // アクリルの厚み部分
+    c.save();
+    c.fillStyle = 'rgba(255,255,255,0.28)';
+    c.fill(outer);
+    c.globalCompositeOperation = 'destination-out';
+    c.fill(inner);
+    c.restore();
+    // 中の透明な液体のうっすらした色
+    c.fillStyle = 'rgba(255,250,252,0.04)';
+    c.fill(inner);
+    // 上下ブロックのグラデーション
+    let g = c.createLinearGradient(0, -CAP_T, 0, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.75)'); g.addColorStop(0.3, 'rgba(255,255,255,0.2)');
+    g.addColorStop(1, 'rgba(255,220,235,0.35)');
+    c.fillStyle = g; c.fillRect(-SIDE + 6, -CAP_T + 2, W + SIDE * 2 - 12, CAP_T - 2);
+    g = c.createLinearGradient(0, H, 0, H + CAP_B);
+    g.addColorStop(0, 'rgba(255,200,225,0.4)'); g.addColorStop(1, 'rgba(255,255,255,0.7)');
+    c.fillStyle = g; c.fillRect(-SIDE + 5, H, W + SIDE * 2 - 10, CAP_B - 2);
+    // 輪郭線
+    c.lineJoin = 'round';
+    c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineWidth = 2.2; c.stroke(outer);
+    c.strokeStyle = 'rgba(200,150,180,0.35)'; c.lineWidth = 1; c.stroke(inner);
+    c.beginPath(); c.moveTo(W / 2 - halfW(0), 0); c.lineTo(W / 2 + halfW(0), 0);
+    c.moveTo(W / 2 - halfW(H), H); c.lineTo(W / 2 + halfW(H), H);
+    c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 1.5; c.stroke();
+    // 縦のハイライト
+    c.lineCap = 'round';
+    const hl = (off, wdt, alpha, y0, y1) => {
+      c.beginPath();
+      for (let i = 0; i <= 24; i++) { const y = y0 + (y1 - y0) * i / 24; const x = W / 2 - halfW(y) + off;
+        i ? c.lineTo(x, y) : c.moveTo(x, y); }
+      c.strokeStyle = `rgba(255,255,255,${alpha})`; c.lineWidth = wdt; c.stroke();
+    };
+    hl(-6, 5, 0.85, 14, H - 30);
+    hl(6, 2, 0.5, 40, H * 0.55);
+    c.beginPath();
+    for (let i = 0; i <= 24; i++) { const y = 30 + (H - 80) * i / 24; const x = W / 2 + halfW(y) + 5;
+      i ? c.lineTo(x, y) : c.moveTo(x, y); }
+    c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 3; c.stroke();
+    c.fillStyle = 'rgba(255,255,255,0.9)';
+    c.beginPath(); c.roundRect(-SIDE + 14, -CAP_T + 8, W * 0.5, 5, 3); c.fill();
+  }
+
+  // =========================================================
+  // レイアウトと入力
+  // =========================================================
+  let vw = 0, vh = 0, scale = 1, dpr = 1, homeX = 0, homeY = 0;
+  let bx = 0, by = 0, bvx = 0, bvy = 0, tx = 0, ty = 0, dragging = false, grabX = 0, grabY = 0;
+  const OW = W + SIDE * 2, OH = H + CAP_T + CAP_B;
   function resize() {
-    dpr = Math.min(2, window.devicePixelRatio || 1);
     vw = innerWidth; vh = innerHeight;
-    cv.width = vw * dpr; cv.height = vh * dpr;
-    scale = Math.min(vw / (W * 1.9), (vh - 230) / (H + 120));
-    home = { x: vw / 2, y: 90 + (vh - 230) / 2 + 55 * scale };
-    if (!dragging) { bx = tx = home.x; by = ty = home.y; }
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    scale = Math.min((vh - 150) / OH, (vw * 0.78) / OW);
+    homeX = (vw - OW * scale) / 2; homeY = 64 + (vh - 150 - OH * scale) / 2 + 10;
+    if (!dragging) { bx = tx = homeX; by = ty = homeY; }
+    bottleEl.style.width = OW * scale + 'px'; bottleEl.style.height = OH * scale + 'px';
+    glCv.style.left = SIDE * scale + 'px'; glCv.style.top = CAP_T * scale + 'px';
+    glCv.style.width = W * scale + 'px'; glCv.style.height = H * scale + 'px';
+    glCv.width = Math.round(W * scale * dpr); glCv.height = Math.round(H * scale * dpr);
+    makeField(Math.round(glCv.width / 2), Math.round(glCv.height / 2)); // 濃度は半分の解像度で十分
+    drawGlass(scale, dpr);
   }
   addEventListener('resize', resize);
 
-  function bottleHit(x, y) {
-    const lx = (x - bx) / scale, ly = (y - by) / scale;
-    return Math.abs(lx) < W / 2 + 30 && ly > -H / 2 - 90 && ly < H / 2 + 20;
-  }
-  cv.addEventListener('pointerdown', e => {
-    dragging = true; cv.classList.add('drag');
-    cv.setPointerCapture(e.pointerId);
-    if (bottleHit(e.clientX, e.clientY)) { grabDX = bx - e.clientX; grabDY = by - e.clientY; }
-    else { grabDX = 0; grabDY = 0; }
-    tx = e.clientX + grabDX; ty = e.clientY + grabDY;
+  const stage = document.getElementById('stage');
+  stage.addEventListener('pointerdown', e => {
+    dragging = true; stage.setPointerCapture(e.pointerId);
+    grabX = bx - e.clientX; grabY = by - e.clientY;
+    tx = bx; ty = by;
   });
-  cv.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    tx = e.clientX + grabDX; ty = e.clientY + grabDY;
-  });
-  const up = () => { dragging = false; cv.classList.remove('drag'); };
-  cv.addEventListener('pointerup', up);
-  cv.addEventListener('pointercancel', up);
+  stage.addEventListener('pointermove', e => { if (dragging) { tx = e.clientX + grabX; ty = e.clientY + grabY; } });
+  const up = () => { dragging = false; };
+  stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
 
-  // スマホのモーションセンサー
+  // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensor');
+  let sax = 0, say = 0, sensorOn = false;
   if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-block';
-  let sensorOn = false;
   sBtn.addEventListener('click', async () => {
     try {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        const r = await DeviceMotionEvent.requestPermission();
-        if (r !== 'granted') return;
-      }
-      if (!sensorOn) {
-        addEventListener('devicemotion', e => {
-          const a = e.acceleration;
-          if (!a || a.x == null) return;
-          sensorA.x = a.x; sensorA.y = -a.y;
-        });
-        sensorOn = true;
-        sBtn.textContent = 'センサーON';
-      }
+      if (typeof DeviceMotionEvent.requestPermission === 'function' &&
+          (await DeviceMotionEvent.requestPermission()) !== 'granted') return;
+      if (sensorOn) return;
+      sensorOn = true; sBtn.textContent = 'センサーON';
+      addEventListener('devicemotion', e => {
+        const a = e.acceleration, g = e.accelerationIncludingGravity;
+        if (a && a.x != null) { sax = a.x; say = -a.y; }
+        if (g && g.x != null) {           // 端末の傾きで重力の向きを変える
+          const gx = -(g.x - (a ? a.x : 0)), gy = (g.y - (a ? a.y : 0));
+          const l = Math.hypot(gx, gy);
+          if (l > 2) { gX += (gx / l - gX) * 0.2; gY += (-gy / l - gY) * 0.2; }
+        }
+      });
     } catch (_) {}
   });
-
   document.getElementById('reset').addEventListener('click', init);
 
-  // ---- 描画 ----
-  const pctEl = document.getElementById('pct'), barEl = document.querySelector('#bar i'),
-        bestEl = document.getElementById('best'), msgEl = document.getElementById('msg');
-  const dark = matchMedia('(prefers-color-scheme: dark)');
-
-  function bottlePath(c) {
-    const w = W / 2 + 6, top = -H / 2 - 6, bot = H / 2 + 6, r = 26, nw = 34, sh = 50;
-    c.beginPath();
-    c.moveTo(-nw, top - sh - 30);
-    c.lineTo(-nw, top - sh);
-    c.quadraticCurveTo(-w, top - sh + 8, -w, top + 10);
-    c.lineTo(-w, bot - r);
-    c.quadraticCurveTo(-w, bot, -w + r, bot);
-    c.lineTo(w - r, bot);
-    c.quadraticCurveTo(w, bot, w, bot - r);
-    c.lineTo(w, top + 10);
-    c.quadraticCurveTo(w, top - sh + 8, nw, top - sh);
-    c.lineTo(nw, top - sh - 30);
-    c.closePath();
-  }
-
-  function draw(tilt) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, vw, vh);
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(tilt);
-    ctx.scale(scale, scale);
-
-    // 影
-    ctx.fillStyle = dark.matches ? '#0005' : '#0001';
-    ctx.beginPath(); ctx.ellipse(0, H / 2 + 20, W / 2 + 10, 10, 0, 0, Math.PI * 2); ctx.fill();
-
-    // ガラス
-    bottlePath(ctx);
-    ctx.fillStyle = dark.matches ? '#ffffff10' : '#ffffff80';
-    ctx.fill();
-
-    // 液体
-    ctx.save();
-    bottlePath(ctx); ctx.clip();
-    ctx.translate(-W / 2, -H / 2);
-    const rr = R * 0.6;
-    ctx.fillStyle = '#5fb0e8';
-    ctx.beginPath();
-    for (const p of P) if (!p.t) { ctx.moveTo(p.x + rr, p.y); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); }
-    ctx.fill();
-    ctx.fillStyle = '#e8b62a';
-    ctx.beginPath();
-    const ro = R * 0.42;
-    for (const p of P) if (p.t) { ctx.moveTo(p.x + ro, p.y); ctx.arc(p.x, p.y, ro, 0, Math.PI * 2); }
-    ctx.fill();
-    ctx.restore();
-
-    // ガラスのふち・ハイライト
-    bottlePath(ctx);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = dark.matches ? '#ffffff55' : '#00000030';
-    ctx.stroke();
-    ctx.strokeStyle = '#ffffff90'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(-W / 2 + 14, -H / 2 + 30); ctx.lineTo(-W / 2 + 14, H / 2 - 40); ctx.stroke();
-
-    // キャップ
-    ctx.fillStyle = '#c0392b';
-    ctx.beginPath(); ctx.roundRect(-40, -H / 2 - 6 - 50 - 52, 80, 30, 6); ctx.fill();
-    ctx.restore();
-  }
-
-  // ---- メインループ ----
-  let frame = 0, prevBvx = 0, prevBvy = 0, shownMix = 0;
-  function loop() {
-    // ボトルを目標位置へバネで追従(離すとホームへ戻る)
-    if (!dragging) { tx = home.x; ty = home.y; }
-    const k = dragging ? 0.6 : 0.15;
-    const nvx = (tx - bx) * k, nvy = (ty - by) * k;
-    bvx = nvx; bvy = nvy;
+  // =========================================================
+  // メインループ(物理は60Hz固定、描画は端末のリフレッシュレート)
+  // =========================================================
+  const pctEl = document.getElementById('pct'), fpsEl = document.getElementById('fps');
+  let last = performance.now(), acc = 0, pvx = 0, pvy = 0, shown = 0, fpsT = 0, fpsN = 0, simMs = 0;
+  function tick() {
+    if (!dragging) { tx = homeX; ty = homeY; }
+    const k = dragging ? 0.55 : 0.12;
+    bvx = (tx - bx) * k; bvy = (ty - by) * k;
     bx += bvx; by += bvy;
-    // 画面上の加速度 → ボトル座標系の慣性力
-    let fax = (bvx - prevBvx) / scale, fay = (bvy - prevBvy) / scale;
-    prevBvx = bvx; prevBvy = bvy;
-    fax += sensorA.x * 0.25; fay += sensorA.y * 0.25;
-    const lim = 18;
-    fax = Math.max(-lim, Math.min(lim, fax)); fay = Math.max(-lim, Math.min(lim, fay));
-    ax = -fax * 0.6 / SUB; ay = -fay * 0.6 / SUB;
-
-    for (let s = 0; s < SUB; s++) {
-      const r = step(s === SUB - 1 && frame % 4 === 0);
-      if (r !== undefined) mix = r;
-    }
-    frame++;
-    shownMix += (mix - shownMix) * 0.2;
-    const pc = Math.round(shownMix * 100);
-    if (pc > best) best = pc;
-    pctEl.textContent = pc + '%';
-    barEl.style.width = pc + '%';
-    bestEl.textContent = 'ベスト ' + best + '%';
-    let m = '';
-    if (pc >= 85) m = '🎉 完全に混ざった!ドレッシング完成';
-    else if (pc >= 60) m = 'いい感じ!もっと振って!';
-    else if (best >= 60 && pc < 30) m = 'あっ…また分離してきた';
-    msgEl.textContent = m; msgEl.style.opacity = m ? 1 : 0;
-
-    draw(Math.max(-0.25, Math.min(0.25, bvx * 0.01)));
+    let fx = (bvx - pvx) / scale + sax * 0.3, fy = (bvy - pvy) / scale + say * 0.3;
+    pvx = bvx; pvy = bvy;
+    const lim = 16;
+    fx = Math.max(-lim, Math.min(lim, fx)); fy = Math.max(-lim, Math.min(lim, fy));
+    ax = -fx * 0.5 / SUB; ay = -fy * 0.5 / SUB;
+    for (let s = 0; s < SUB; s++) substep();
+  }
+  function loop(now) {
+    let dt = Math.min(0.1, (now - last) / 1000); last = now;
+    acc += dt;
+    const t0 = performance.now();
+    let n = 0;
+    while (acc >= 1 / 60 && n < 3) { tick(); acc -= 1 / 60; n++; }
+    if (n === 3) acc = 0;
+    simMs = simMs * 0.9 + (performance.now() - t0) * 0.1;
+    const tilt = Math.max(-0.2, Math.min(0.2, bvx * 0.008));
+    bottleEl.style.transform = `translate3d(${bx}px,${by}px,0) rotate(${tilt}rad)`;
+    render();
+    const mix = Math.max(0, Math.min(1, 1 - avgSep() / sep0));
+    shown += (mix - shown) * 0.1;
+    pctEl.textContent = Math.round(shown * 100) + '%';
+    fpsN++; fpsT += dt;
+    if (fpsT > 1) { fpsEl.textContent = `${Math.round(fpsN / fpsT)}fps · 物理 ${simMs.toFixed(1)}ms · ${N}粒`; fpsN = 0; fpsT = 0; }
     requestAnimationFrame(loop);
   }
 
   resize(); init();
-  // テスト用フック
-  window.__shake = { P: () => P, step, setA: (x, y) => { ax = x; ay = y; }, mix: () => mix };
+  window.__shake = { N: () => N, X, Y, T, setA(x, y) { ax = x; ay = y; }, tick, avgSep, sep0: () => sep0 };
   requestAnimationFrame(loop);
 })();
 </script>
