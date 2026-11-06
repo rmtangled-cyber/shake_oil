@@ -246,15 +246,16 @@
       float rb = 1.-nb.z, rp = 1.-np.z;
       float eb = clamp(.42 + rb*1.8 + (c.r-TH)*.3, 0., 1.);
       float ep = clamp(.42 + rp*1.8 + (c.g-TH)*.3, 0., 1.);
-      vec3 blue = mix(vec3(.30,.60,1.), vec3(.0,.16,.80), eb);
-      vec3 pink = mix(vec3(1.,.55,.80), vec3(.92,.10,.50), ep);
+      vec3 blue = mix(vec3(.24,.45,.88), vec3(.03,.07,.55), eb);
+      vec3 pink = mix(vec3(.93,.36,.68), vec3(.78,.11,.38), ep);
       // 中心付近、光と反対側にできる明るい集光
       float cb = pow(max(dot(nb.xy, normalize(vec2(.5,-.65))), 0.), 1.5)*.45*ab;
       float cp = pow(max(dot(np.xy, normalize(vec2(.5,-.65))), 0.), 1.5)*.45*ap;
-      vec3 tb = mix(vec3(1.), blue, ab*.92);
-      vec3 tp = mix(vec3(1.), pink, ap*.88);
-      vec3 col = tb * tp;                              // 重なると色が掛け合わさる
-      col += vec3(.55,.8,1.)*cb + vec3(1.,.8,.92)*cp;
+      // ピンクが奥、青が手前。重なると青越しにピンクが沈んで濃紺になる
+      vec3 col = mix(vec3(1.), pink, ap*.95);
+      col = mix(col, blue * mix(vec3(1.), col, .3), ab*.95);
+      col *= mix(1., .6, ab*ap);
+      col += vec3(.35,.6,1.)*cb*.7 + vec3(1.,.55,.8)*cp*.6;
       float sb = pow(max(dot(nb,Hh),0.), 90.)*ab, sp = pow(max(dot(np,Hh),0.), 90.)*ap;
       float soft = (pow(max(dot(nb,Hh),0.), 12.)*ab + pow(max(dot(np,Hh),0.), 12.)*ap)*.12;
       // 泡: ふちが白く光る透明な球
@@ -262,7 +263,7 @@
       float bubbleSpec = ao * pow(max(dot(no,Hh),0.), 30.);
       col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec;
       col += (sb + sp)*.95 + soft;
-      float alpha = max(max(ab*mix(.6, .93, eb), ap*mix(.58, .92, ep)), ao*(.18 + .6*bubbleRim + bubbleSpec));
+      float alpha = max(max(ab*mix(.82, .97, eb), ap*mix(.8, .96, ep)), ao*(.18 + .6*bubbleRim + bubbleSpec));
       alpha = clamp(alpha + (sb+sp)*.6, 0., 1.);
       gl_FragColor = vec4(min(col, vec3(1.))*alpha, alpha);
     }`);
@@ -366,6 +367,7 @@
     c.fillStyle = 'rgba(255,255,255,0.28)';
     c.fill(outer);
     c.globalCompositeOperation = 'destination-out';
+    c.fillStyle = '#000';   // 中身の部分は完全にくり抜く
     c.fill(inner);
     c.restore();
     // 中の透明な液体のうっすらした色
@@ -374,10 +376,10 @@
     // 上下ブロックのグラデーション
     let g = c.createLinearGradient(0, -CAP_T, 0, 0);
     g.addColorStop(0, 'rgba(255,255,255,0.75)'); g.addColorStop(0.3, 'rgba(255,255,255,0.2)');
-    g.addColorStop(1, 'rgba(150,185,255,0.35)');
+    g.addColorStop(1, 'rgba(70,100,230,0.4)');
     c.fillStyle = g; c.fillRect(-SIDE + 6, -CAP_T + 2, W + SIDE * 2 - 12, CAP_T - 2);
     g = c.createLinearGradient(0, H, 0, H + CAP_B);
-    g.addColorStop(0, 'rgba(255,170,210,0.45)'); g.addColorStop(1, 'rgba(255,240,248,0.75)');
+    g.addColorStop(0, 'rgba(225,60,130,0.45)'); g.addColorStop(1, 'rgba(255,240,248,0.75)');
     c.fillStyle = g; c.fillRect(-SIDE + 5, H, W + SIDE * 2 - 10, CAP_B - 2);
     // 輪郭線
     c.lineJoin = 'round';
