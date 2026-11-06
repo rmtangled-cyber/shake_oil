@@ -3,104 +3,151 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#f7dfe8">
+<meta name="theme-color" content="#f6f1f4">
 <title>シェイク・オイル</title>
 <style>
-  :root { --fg:#4a3a48; --sub:#9a8394; --panel:#ffffffaa; }
+  :root { --fg:#4a4148; --sub:#958a92; --panel:#ffffffb0; --bg1:#fdfbfc; --bg2:#f3e6ee; --glow1:#ffd6e6; --glow2:#d8dcff; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; color:var(--fg);
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
     overflow:hidden; touch-action:none; user-select:none; -webkit-user-select:none;
     -webkit-tap-highlight-color: transparent; }
   body { background:
-      radial-gradient(60vmax 50vmax at 85% 30%, #ffd3e4 0%, transparent 60%),
-      radial-gradient(50vmax 40vmax at 10% 80%, #ffe6ef 0%, transparent 60%),
-      radial-gradient(40vmax 30vmax at 80% 90%, #e9dcff 0%, transparent 60%),
-      linear-gradient(180deg, #fff6f8 0%, #fbe3ec 100%); }
-  .bokeh { position:fixed; border-radius:50%; filter: blur(18px); opacity:.55; pointer-events:none; }
+      radial-gradient(60vmax 50vmax at 85% 25%, var(--glow1) 0%, transparent 60%),
+      radial-gradient(50vmax 40vmax at 10% 85%, var(--glow2) 0%, transparent 60%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%); }
   #stage { position:fixed; inset:0; }
-  #bottle { position:absolute; left:0; top:0; will-change:transform; transform-origin: 50% 60%; }
+  #bottle { position:absolute; left:0; top:0; will-change:transform; }
   #bottle canvas { position:absolute; display:block; }
-  #hud { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:16px; right:16px; display:flex;
-    justify-content:center; align-items:center; pointer-events:none; }
-  #hud h1 { margin:0; font-size:15px; font-weight:500; letter-spacing:.2em; color:var(--sub); }
+  #shadow { position:absolute; left:0; top:0; border-radius:50%;
+    background:radial-gradient(closest-side, #0000002a, transparent); pointer-events:none; will-change:transform; }
+  #hud { position:fixed; top:calc(12px + env(safe-area-inset-top)); left:0; right:0; text-align:center; pointer-events:none; }
+  #hud h1 { margin:0; font-size:14px; font-weight:500; letter-spacing:.25em; color:var(--sub); }
   #btns { position:fixed; left:0; right:0; bottom:calc(16px + env(safe-area-inset-bottom));
-    display:flex; justify-content:center; gap:10px; }
-  button { font:inherit; font-size:14px; padding:10px 18px; border-radius:999px; border:1px solid #ffffff;
+    display:flex; justify-content:center; gap:10px; padding:0 16px; flex-wrap:wrap; }
+  button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #ffffff;
     background:var(--panel); color:var(--fg); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  button:focus-visible { outline:2px solid var(--sub); outline-offset:2px; }
   #sensor { display:none; }
-  #fps { position:fixed; left:8px; bottom:4px; font-size:10px; color:var(--sub); }
+  #fps { position:fixed; left:8px; bottom:calc(2px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); }
 </style>
 </head>
 <body>
-<div class="bokeh" style="width:160px;height:160px;left:-40px;top:22%;background:#ffc4da"></div>
-<div class="bokeh" style="width:110px;height:110px;right:-20px;top:62%;background:#d9c8ff"></div>
-<div class="bokeh" style="width:80px;height:80px;right:12%;top:8%;background:#fff"></div>
 <div id="stage">
+  <div id="shadow"></div>
   <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
 </div>
-<div id="hud">
-  <h1>シェイク・オイル</h1>
+<div id="hud"><h1>シェイク・オイル</h1></div>
+<div id="btns">
+  <button id="color">色をかえる</button>
+  <button id="flip">ひっくり返す</button>
+  <button id="sensor">スマホを振って遊ぶ</button>
 </div>
-<div id="btns"><button id="reset">リセット</button><button id="sensor">スマホを振って遊ぶ</button></div>
 <div id="fps"></div>
 <script>
 (() => {
   'use strict';
   // =========================================================
-  // 容器の形(ワールド座標, 単位 = 論理px)
+  // 容器の形(ワールド座標, 単位 = 論理px)。docs/reference-notes.md 参照
   // =========================================================
-  const W = 200, H = 400;           // 液体が入る内寸
-  const WAIST = 30;                 // くびれの深さ
-  const CAP_T = 46, CAP_B = 40, SIDE = 12; // ガラス(アクリル)の厚み
+  const W = 200, H = 420;
+  const WAIST = 16;                         // ゆるいくびれ
+  const CAP = 46, SIDE = 11;                // 上下ブロックと側面の厚み
+  const PLATE_Y = 84, PLATE_V = 38;         // 仕切り: 壁際の高さとV字の深さ
+  const HOLE = 11, GAP = 18;                // 中央ノズルの半幅・壁際のすき間
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
-    return W / 2 - WAIST * s * Math.sqrt(s);
+    return W / 2 - WAIST * s * s;
   }
+  // 仕切り(上はV字、下は山型。上下対称なので逆さにしても同じ)
+  const SEG = [];
+  {
+    const cx = W / 2, hw = halfW(PLATE_Y) - GAP;
+    for (const flip of [false, true]) {
+      const f = y => flip ? H - y : y;
+      SEG.push([cx - hw, f(PLATE_Y), cx - HOLE, f(PLATE_Y + PLATE_V)]);
+      SEG.push([cx + HOLE, f(PLATE_Y + PLATE_V), cx + hw, f(PLATE_Y)]);
+    }
+  }
+  // ノズルのふた: 下向きのノズルだけ、一定の間隔で少しだけ開く → 1回で滴がひとつ落ちる
+  SEG.push([W / 2 - HOLE - 1, PLATE_Y + PLATE_V, W / 2 + HOLE + 1, PLATE_Y + PLATE_V]);
+  SEG.push([W / 2 - HOLE - 1, H - PLATE_Y - PLATE_V, W / 2 + HOLE + 1, H - PLATE_Y - PLATE_V]);
+  // 壁際のすき間のふた: じょうご側(上)では閉じ、山型側(下)では開いて、たまった液が下の部屋へ流れる
+  for (const yy of [PLATE_Y, H - PLATE_Y]) {
+    const hw = halfW(yy);
+    SEG.push([W / 2 - hw, yy, W / 2 - hw + GAP + 1, yy]);
+    SEG.push([W / 2 + hw - GAP - 1, yy, W / 2 + hw, yy]);
+  }
+  const NPLATE = 4, NS = SEG.length;
+  const lidOn = [false, false, false, false, false, false];
+  const DRIP_PERIOD = 1.7, DRIP_OPEN = 0.55;   // 秒
+  const SX = new Float32Array(NS), SY = new Float32Array(NS), SDX = new Float32Array(NS), SDY = new Float32Array(NS),
+        SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
+  SEG.forEach(([x1, y1, x2, y2], i) => {
+    SX[i] = x1; SY[i] = y1; SDX[i] = x2 - x1; SDY[i] = y2 - y1;
+    SL2[i] = SDX[i] * SDX[i] + SDY[i] * SDY[i];
+    const l = Math.sqrt(SL2[i]); SNX[i] = -SDY[i] / l; SNY[i] = SDX[i] / l;
+  });
+
+  // =========================================================
+  // 色の組み合わせ(参考写真から)。A=手前の液体 / B=奥の液体
+  // =========================================================
+  const THEMES = [
+    { A: [[.20,.42,.95],[.03,.09,.58]], B: [[.96,.40,.72],[.78,.10,.42]], css: ['#fdfbfc','#f3e6ee','#ffd6e6','#d8dcff'] },
+    { A: [[.22,.80,.95],[.0,.42,.72]],  B: [[.92,.52,.90],[.70,.22,.68]], css: ['#fbfcfe','#e9eef6','#e4d6ff','#cdeffa'] },
+    { A: [[.42,.80,.22],[.08,.48,.10]], B: [[.12,.62,.88],[.02,.30,.62]], css: ['#fbfdfb','#e6efea','#d6f2df','#d3e8f7'] },
+    { A: [[.98,.28,.20],[.72,.05,.08]], B: [[1.,.84,.22],[.88,.56,.0]],   css: ['#fffcf8','#f6ebe0','#ffe0c9','#fff1c2'] },
+  ];
+  let theme = 0;
 
   // =========================================================
   // 物理(粒子法: double density relaxation)
-  // 青 = 軽い液体(上へ浮く) / ピンク = 重い液体(下へ沈む)
-  // 透明な液体は粒子を持たず、抵抗と浮力として扱う
+  // 色付きの液体は透明な液体より重いので沈む。透明な液体は抵抗として扱う
   // =========================================================
-  const R = 15, SP = 6.6, SUB = 2;
-  const K = 0.22, KN = 0.42;
-  const BUOY = 0.016, DRAG = 0.982, VMAX = 7;
-  const MAXN = 1200;
+  const R = 14, SP = 6.2, SUB = 2;
+  const K = 0.24, KN = 0.45, KC = 0.025;    // 圧力・近距離圧力・異色どうしの弱い反発
+  const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
+  const GRAV = [0.0088, 0.010];            // 色ごとに落ちる速さが少し違う
+  const DRAG = 0.972, VMAX = 6;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
+  const MAXN = 1400;
   const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
   const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
   const VX = new Float32Array(MAXN), VY = new Float32Array(MAXN);
-  const T = new Uint8Array(MAXN); // 0=青 1=ピンク
+  const T = new Uint8Array(MAXN);           // 0=A(上側の厚い層) 1=B(仕切りに沿った薄い層)
   let N = 0, rho0 = 1;
 
   const GW = Math.ceil(W / R) + 1, GH = Math.ceil(H / R) + 1;
   const cellStart = new Int32Array(GW * GH + 1), cellOf = new Int32Array(MAXN), sorted = new Int32Array(MAXN);
 
-  function fillLayer(y0, y1, type) {
-    for (let y = y0, row = 0; y < y1; y += SP * 0.866, row++) {
-      const lim = halfW(y) - 3;
-      for (let x = W / 2 - lim + (row & 1) * SP / 2; x <= W / 2 + lim; x += SP) {
-        if (N >= MAXN) return;
-        X[N] = PX[N] = x + (Math.random() - .5) * .2; Y[N] = PY[N] = y;
-        VX[N] = VY[N] = 0; T[N] = type; N++;
-      }
-    }
+  function plateTop(x) {            // 上の仕切りの上面の高さ
+    const d = Math.abs(x - W / 2), hw = halfW(PLATE_Y);
+    return d < HOLE ? PLATE_Y + PLATE_V : PLATE_Y + PLATE_V * (hw - d) / (hw - HOLE);
   }
   function init() {
     N = 0;
-    fillLayer(3, H * 0.2, 0);
-    fillLayer(H * 0.8, H - 3, 1);
-    // 静止密度
-    let best = 0;
-    const cx = W / 2, cy = H * 0.9;
-    for (let i = 0; i < N; i++) if (Math.hypot(X[i] - cx, Y[i] - cy) < Math.hypot(X[best] - cx, Y[best] - cy)) best = i;
+    for (let y = PLATE_Y + PLATE_V - 4, row = 0; y > 6; y -= SP * 0.866, row++) {
+      const lim = halfW(y) - 3;
+      for (let x = W / 2 - lim + (row & 1) * SP / 2; x <= W / 2 + lim; x += SP) {
+        const top = plateTop(x) - 4;
+        if (y > top) continue;
+        const depth = top - y;
+        let t;
+        if (depth < 16) t = 1; else if (depth < 70) t = 0; else continue;
+        if (N >= MAXN) break;
+        X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
+        VX[N] = VY[N] = 0; T[N] = t; N++;
+      }
+    }
+    // 静止密度(格子の内部の粒子で測る)
+    let bi = 0; const cx = W / 2, cy = 40;
+    for (let i = 0; i < N; i++) if (Math.hypot(X[i] - cx, Y[i] - cy) < Math.hypot(X[bi] - cx, Y[bi] - cy)) bi = i;
     let r = 0;
     for (let j = 0; j < N; j++) {
-      if (j === best) continue;
-      const q = Math.hypot(X[j] - X[best], Y[j] - Y[best]) / R;
+      if (j === bi) continue;
+      const q = Math.hypot(X[j] - X[bi], Y[j] - Y[bi]) / R;
       if (q < 1) r += (1 - q) * (1 - q);
     }
-    rho0 = r * 1.2;
+    rho0 = r * 1.18;
     initBubbles();
   }
 
@@ -117,34 +164,45 @@
     for (let i = 0; i < N; i++) sorted[fillPos[cellOf[i]]++] = i;
   }
 
-  // 透明な液体の中を漂う小さな泡(見た目だけ・液滴とは独立)
-  const NB = 18, BX = new Float32Array(NB), BY = new Float32Array(NB), BV = new Float32Array(NB),
-        BS = new Float32Array(NB), BP = new Float32Array(NB);
-  function initBubbles() {
-    for (let i = 0; i < NB; i++) { BX[i] = 20 + Math.random() * (W - 40); BY[i] = Math.random() * H;
-      BV[i] = 0.08 + Math.random() * 0.12; BS[i] = 0.25 + Math.random() * 0.35; BP[i] = Math.random() * 6.28; }
-  }
-  let bt = 0;
-  function moveBubbles() {
-    bt += 1 / 60;
-    for (let i = 0; i < NB; i++) {
-      BY[i] -= BV[i] - ay * SUB * 0.3; BX[i] += Math.sin(bt * 0.8 + BP[i]) * 0.12 + ax * SUB * 0.3;
-      if (BY[i] < 4) { BY[i] = H - 4; BX[i] = 20 + Math.random() * (W - 40); }
-      if (BY[i] > H - 4) BY[i] = H - 4;
-      const lim = halfW(BY[i]) - 4;
-      if (BX[i] < W / 2 - lim) BX[i] = W / 2 - lim; else if (BX[i] > W / 2 + lim) BX[i] = W / 2 + lim;
+  let gbx = 0, gby = 1;     // 容器から見た重力の向き
+  let ax = 0, ay = 0;       // 振ったときの慣性加速度
+  const nbJ = new Int32Array(256), nbQ = new Float32Array(256), nbS = new Uint8Array(256);
+  const R2 = R * R;
+
+  const PM = 7;   // 仕切りの厚み(液体の見た目がはみ出さないよう少し厚め)
+  function collidePlates(i) {
+    const m = PM;
+    for (let s = 0; s < NS; s++) {
+      if (s >= NPLATE && !lidOn[s - NPLATE]) continue;
+      const x = X[i], y = Y[i];
+      const s0 = (PX[i] - SX[s]) * SNX[s] + (PY[i] - SY[s]) * SNY[s];
+      const s1 = (x - SX[s]) * SNX[s] + (y - SY[s]) * SNY[s];
+      let t = ((x - SX[s]) * SDX[s] + (y - SY[s]) * SDY[s]) / SL2[s];
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const qx = SX[s] + SDX[s] * t, qy = SY[s] + SDY[s] * t;
+      const dx = x - qx, dy = y - qy, d2 = dx * dx + dy * dy;
+      if (s0 * s1 < 0 && t > 0 && t < 1) {
+        // 通り抜け防止: 前の位置の側へ戻す
+        const side = s0 > 0 ? 1 : -1;
+        X[i] = qx + SNX[s] * m * side; Y[i] = qy + SNY[s] * m * side;
+      } else if (d2 < m * m) {
+        const d = Math.sqrt(d2);
+        let nx, ny;
+        if (d < 1e-3) { const side = s0 >= 0 ? 1 : -1; nx = SNX[s] * side; ny = SNY[s] * side; }
+        else { nx = dx / d; ny = dy / d; }
+        X[i] = qx + nx * m; Y[i] = qy + ny * m;
+      }
     }
   }
 
-  let gX = 0, gY = 1;       // 重力方向(センサーで傾けられる)
-  let ax = 0, ay = 0;       // 振ったときの慣性加速度
-  const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
-  const R2 = R * R;
-
+  // ノズルが開いている間、ノズルの入り口付近の液体に少し下向きの力を足す
+  // (ぶら下がった滴の重さが液を引っぱる効果の代わり。少量でも最後まで落ちきる)
+  let nozzleY = -1;
   function substep() {
     for (let i = 0; i < N; i++) {
-      const b = T[i] ? BUOY : -BUOY;
-      let vx = (VX[i] + gX * b + ax) * DRAG, vy = (VY[i] + gY * b + ay) * DRAG;
+      let g = GRAV[T[i]];
+      if (nozzleY >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nozzleY) < 18) g *= 4;
+      const vx = (VX[i] + gbx * g + ax) * DRAG, vy = (VY[i] + gby * g + ay) * DRAG;
       PX[i] = X[i]; PY[i] = Y[i];
       X[i] += vx; Y[i] += vy;
     }
@@ -152,7 +210,7 @@
     for (let i = 0; i < N; i++) {
       const xi = X[i], yi = Y[i], ti = T[i];
       const c = cellOf[i], cx = c % GW, cy = (c / GW) | 0;
-      let rho = 0, rhoN = 0, n = 0;
+      let rho = 0, rhoN = 0, n = 0, ws = 0, wx = 0, wy = 0;
       for (let gy = cy - 1; gy <= cy + 1; gy++) {
         if (gy < 0 || gy >= GH) continue;
         for (let gx = cx - 1; gx <= cx + 1; gx++) {
@@ -163,10 +221,9 @@
             if (j === i) continue;
             const dx = X[j] - xi, dy = Y[j] - yi, d2 = dx * dx + dy * dy;
             if (d2 >= R2 || n >= 256) continue;
-            if (T[j] !== ti) continue; // 青とピンクは奥行きが違うので、ぶつからずにすれ違う
-            const q = Math.sqrt(d2) / R, a = 1 - q;
-            rho += a * a; rhoN += a * a * a;
-            nbJ[n] = j; nbQ[n] = q; n++;
+            const q = Math.sqrt(d2) / R, a = 1 - q, same = T[j] === ti;
+            if (same) { rho += a * a; rhoN += a * a * a; ws += a; wx += a * X[j]; wy += a * Y[j]; }
+            nbJ[n] = j; nbQ[n] = q; nbS[n] = same ? 1 : 0; n++;
           }
         }
       }
@@ -177,14 +234,18 @@
         let dx = X[j] - X[i], dy = Y[j] - Y[i];
         const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
         dx /= d; dy /= d;
-        const D = (pr * a + prN * a * a) * 0.5;
+        // 同じ色: 圧力+表面張力 / 違う色: 近いときだけ弱く押し合う(重なりながらすれ違える)
+        const D = nbS[m] ? (pr * a + prN * a * a) * 0.5 : (q < 0.7 ? KC * a * a * 0.5 : 0);
         X[j] += dx * D; Y[j] += dy * D;
         sx -= dx * D; sy -= dy * D;
       }
       X[i] += sx; Y[i] += sy;
+      // 周りの同じ色の重心へ少し寄せる: 表面が縮み、細い流れはくびれて滴に分かれる
+      if (ws > 0) { X[i] += ST * (wx / ws - xi); Y[i] += ST * (wy / ws - yi); }
     }
     const m = 2.5;
     for (let i = 0; i < N; i++) {
+      collidePlates(i);
       let x = X[i], y = Y[i];
       if (y < m) y = m; else if (y > H - m) y = H - m;
       const lim = halfW(y) - m;
@@ -197,10 +258,29 @@
     }
   }
 
+  // 透明な液体の中の小さな泡(見た目だけ)
+  const NB = 10, BX = new Float32Array(NB), BY = new Float32Array(NB), BV = new Float32Array(NB),
+        BS = new Float32Array(NB), BP = new Float32Array(NB);
+  const BLO = PLATE_Y + PLATE_V + 8, BHI = H - PLATE_Y - PLATE_V - 8;
+  function initBubbles() {
+    for (let i = 0; i < NB; i++) { BX[i] = 20 + Math.random() * (W - 40); BY[i] = BLO + Math.random() * (BHI - BLO);
+      BV[i] = 0.05 + Math.random() * 0.08; BS[i] = 0.2 + Math.random() * 0.25; BP[i] = Math.random() * 6.28; }
+  }
+  let bt = 0;
+  function moveBubbles() {
+    bt += 1 / 60;
+    for (let i = 0; i < NB; i++) {
+      BY[i] += -gby * BV[i] + ay * SUB * 0.3; BX[i] += -gbx * BV[i] + Math.sin(bt * 0.8 + BP[i]) * 0.1 + ax * SUB * 0.3;
+      if (BY[i] < BLO) BY[i] = BHI; else if (BY[i] > BHI) BY[i] = BLO;
+      const lim = halfW(BY[i]) - 5;
+      if (BX[i] < W / 2 - lim) BX[i] = W / 2 - lim; else if (BX[i] > W / 2 + lim) BX[i] = W / 2 + lim;
+    }
+  }
+
   // =========================================================
   // 描画(WebGL)
-  //   1) 粒子をぼかした点として「濃度テクスチャ」に加算 (青=R, ピンク=G)
-  //   2) 濃度をしきい値で切って、なめらかな液体の形+光沢を付ける
+  //   1) 粒子をぼかした点として「濃度テクスチャ」に加算 (A=R, B=G, 泡=B)
+  //   2) 濃度をしきい値で切って液体の形を作り、色・縁の線・ツヤを付ける
   // =========================================================
   const glCv = document.getElementById('gl');
   const gl = glCv.getContext('webgl', { premultipliedAlpha: true, alpha: true, antialias: false });
@@ -223,48 +303,40 @@
     void main(){ vUv = a*.5+.5; gl_Position = vec4(a,0.,1.); }`,
   `precision mediump float;
     varying vec2 vUv; uniform sampler2D uF; uniform vec2 uTx; uniform vec2 uSize; uniform float uWaist;
-    float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*sqrt(s); }
+    uniform vec3 uA0, uA1, uB0, uB1;   // 各色の 明るい色 / 濃い色
+    float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*s; }
     void main(){
       vec2 w = vec2(vUv.x*uSize.x, (1.-vUv.y)*uSize.y);
-      float edge = halfW(w.y) - abs(w.x-uSize.x*.5);
-      if(edge < 0.) discard;
+      if(halfW(w.y) - abs(w.x-uSize.x*.5) < 0.) discard;
       vec4 c = texture2D(uF, vUv);
       const float TH = .5;
-      float ab = smoothstep(TH-.06, TH+.06, c.r);
-      float ap = smoothstep(TH-.06, TH+.06, c.g);
-      float ao = smoothstep(.42, .58, c.b);           // 泡
+      float ab = smoothstep(TH-.05, TH+.05, c.r);
+      float ap = smoothstep(TH-.05, TH+.05, c.g);
+      float ao = smoothstep(.42, .58, c.b);
       if(max(max(ab, ap), ao) < .003) discard;
       vec4 tl = texture2D(uF, vUv-vec2(uTx.x,0.)), tr = texture2D(uF, vUv+vec2(uTx.x,0.));
       vec4 td = texture2D(uF, vUv-vec2(0.,uTx.y)), tu = texture2D(uF, vUv+vec2(0.,uTx.y));
-      // 青とピンクそれぞれの表面の法線
-      vec3 nb = normalize(vec3((tl.r-tr.r)*2.6, (td.r-tu.r)*2.6, 1.));
-      vec3 np = normalize(vec3((tl.g-tr.g)*2.6, (td.g-tu.g)*2.6, 1.));
+      vec3 na = normalize(vec3((tl.r-tr.r)*2.4, (td.r-tu.r)*2.4, 1.));
+      vec3 nb = normalize(vec3((tl.g-tr.g)*2.4, (td.g-tu.g)*2.4, 1.));
       vec3 no = normalize(vec3((tl.b-tr.b)*1.5, (td.b-tu.b)*1.5, 1.));
-      vec3 L = normalize(vec3(-.5,.65,.6));
-      vec3 Hh = normalize(L+vec3(0.,0.,1.));
-      // 縁ほど光が長く通るので色が濃く、中心は明るく透ける
-      float rb = 1.-nb.z, rp = 1.-np.z;
-      float eb = clamp(.42 + rb*1.8 + (c.r-TH)*.3, 0., 1.);
-      float ep = clamp(.42 + rp*1.8 + (c.g-TH)*.3, 0., 1.);
-      vec3 blue = mix(vec3(.24,.45,.88), vec3(.03,.07,.55), eb);
-      vec3 pink = mix(vec3(.93,.36,.68), vec3(.78,.11,.38), ep);
-      // 中心付近、光と反対側にできる明るい集光
-      float cb = pow(max(dot(nb.xy, normalize(vec2(.5,-.65))), 0.), 1.5)*.45*ab;
-      float cp = pow(max(dot(np.xy, normalize(vec2(.5,-.65))), 0.), 1.5)*.45*ap;
-      // ピンクが奥、青が手前。重なると青越しにピンクが沈んで濃紺になる
-      vec3 col = mix(vec3(1.), pink, ap*.95);
-      col = mix(col, blue * mix(vec3(1.), col, .3), ab*.95);
-      col *= mix(1., .6, ab*ap);
-      col += vec3(.35,.6,1.)*cb*.7 + vec3(1.,.55,.8)*cp*.6;
-      float sb = pow(max(dot(nb,Hh),0.), 90.)*ab, sp = pow(max(dot(np,Hh),0.), 90.)*ap;
-      float soft = (pow(max(dot(nb,Hh),0.), 12.)*ab + pow(max(dot(np,Hh),0.), 12.)*ap)*.12;
-      // 泡: ふちが白く光る透明な球
+      // 縁の細い線(しきい値のすぐ内側)と、縁に向かってわずかに濃くなるグラデーション
+      float la = ab * (1. - smoothstep(TH+.03, TH+.16, c.r));
+      float lb = ap * (1. - smoothstep(TH+.03, TH+.16, c.g));
+      float ea = clamp(.18 + (1.-na.z)*1.1 + la*.7, 0., 1.);
+      float eb = clamp(.18 + (1.-nb.z)*1.1 + lb*.7, 0., 1.);
+      vec3 colA = mix(uA0, uA1, ea), colB = mix(uB0, uB1, eb);
+      // 奥がB、手前がA。重なるとAを通してBが沈んで濃い色になる
+      vec3 col = mix(vec3(1.), colB, ap*.9);
+      col = mix(col, colA * mix(vec3(1.), col, .4), ab*.9);
+      col *= mix(1., .7, ab*ap);
+      // 光の当たる側の縁に小さなツヤ
+      vec3 L = normalize(vec3(-.55,.6,.58)), Hh = normalize(L+vec3(0.,0.,1.));
+      float sa = pow(max(dot(na,Hh),0.), 70.)*ab, sb = pow(max(dot(nb,Hh),0.), 70.)*ap;
       float bubbleRim = ao * smoothstep(.0, .5, 1.-no.z);
       float bubbleSpec = ao * pow(max(dot(no,Hh),0.), 30.);
-      col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec;
-      col += (sb + sp)*.95 + soft;
-      float alpha = max(max(ab*mix(.82, .97, eb), ap*mix(.8, .96, ep)), ao*(.18 + .6*bubbleRim + bubbleSpec));
-      alpha = clamp(alpha + (sb+sp)*.6, 0., 1.);
+      col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec + (sa+sb)*.8;
+      float alpha = max(max(ab*mix(.78,.95,ea), ap*mix(.74,.93,eb)), ao*(.15 + .6*bubbleRim + bubbleSpec));
+      alpha = clamp(alpha + (sa+sb)*.5, 0., 1.);
       gl_FragColor = vec4(min(col, vec3(1.))*alpha, alpha);
     }`);
 
@@ -292,13 +364,11 @@
   }
 
   const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt') };
-  const uC = { f: gl.getUniformLocation(compP, 'uF'), tx: gl.getUniformLocation(compP, 'uTx'),
-               size: gl.getUniformLocation(compP, 'uSize'), waist: gl.getUniformLocation(compP, 'uWaist') };
+  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1']) uC[n] = gl.getUniformLocation(compP, n);
   const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
 
   function render() {
     for (let i = 0; i < N; i++) { pData[i*3] = X[i]; pData[i*3+1] = Y[i]; pData[i*3+2] = T[i]; }
-    // 1) 濃度
     gl.bindFramebuffer(gl.FRAMEBUFFER, fFbo);
     gl.viewport(0, 0, fW, fH);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
@@ -311,22 +381,24 @@
     gl.enableVertexAttribArray(aS);
     gl.vertexAttribPointer(aS, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.POINTS, 0, N);
-    // 泡は小さく
     for (let i = 0; i < NB; i++) { pData[i*3] = BX[i]; pData[i*3+1] = BY[i]; pData[i*3+2] = 2; }
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, pData.subarray(0, NB * 3));
     for (let i = 0; i < NB; i++) { gl.uniform1f(uS.pt, R * 2.0 * BS[i] * fW / W); gl.drawArrays(gl.POINTS, i, 1); }
     gl.disableVertexAttribArray(aS);
-    // 2) 合成
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, glCv.width, glCv.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(compP);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fTex);
-    gl.uniform1i(uC.f, 0);
-    gl.uniform2f(uC.tx, 1.5 / fW, 1.5 / fH);
-    gl.uniform2f(uC.size, W, H);
-    gl.uniform1f(uC.waist, WAIST);
+    gl.uniform1i(uC.uF, 0);
+    gl.uniform2f(uC.uTx, 1.5 / fW, 1.5 / fH);
+    gl.uniform2f(uC.uSize, W, H);
+    gl.uniform1f(uC.uWaist, WAIST);
+    const th = THEMES[theme];
+    gl.uniform3fv(uC.uA0, th.A[0]); gl.uniform3fv(uC.uA1, th.A[1]);
+    gl.uniform3fv(uC.uB0, th.B[0]); gl.uniform3fv(uC.uB1, th.B[1]);
     gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
     gl.enableVertexAttribArray(aC);
     gl.vertexAttribPointer(aC, 2, gl.FLOAT, false, 0, 0);
@@ -335,75 +407,79 @@
   }
 
   // =========================================================
-  // ガラス(静止画として一度だけ描く)
+  // アクリルの容器と仕切り(静止画として描き、CSSで動かす)
   // =========================================================
   const glassCv = document.getElementById('glass'), gx2 = glassCv.getContext('2d');
-  const bottleEl = document.getElementById('bottle');
+  const bottleEl = document.getElementById('bottle'), shadowEl = document.getElementById('shadow');
+  const rgb = (c, a) => `rgba(${c.map(v => Math.round(v * 255)).join(',')},${a})`;
   function drawGlass(scale, dpr) {
-    const ow = W + SIDE * 2, oh = H + CAP_T + CAP_B;
+    const ow = W + SIDE * 2, oh = H + CAP * 2;
     glassCv.width = Math.round(ow * scale * dpr); glassCv.height = Math.round(oh * scale * dpr);
     glassCv.style.width = ow * scale + 'px'; glassCv.style.height = oh * scale + 'px';
     glassCv.style.left = '0px'; glassCv.style.top = '0px';
-    const c = gx2;
-    c.setTransform(scale * dpr, 0, 0, scale * dpr, SIDE * scale * dpr, CAP_T * scale * dpr);
-    c.clearRect(-SIDE, -CAP_T, ow, oh);
-    // 外側の輪郭(くびれ付き)
-    const outer = new Path2D();
+    const c = gx2, th = THEMES[theme];
+    c.setTransform(scale * dpr, 0, 0, scale * dpr, SIDE * scale * dpr, CAP * scale * dpr);
+    c.clearRect(-SIDE, -CAP, ow, oh);
     const steps = 48;
-    outer.moveTo(W / 2 - halfW(0) - SIDE + 8, -CAP_T);
+    const outer = new Path2D();
+    outer.moveTo(W / 2 - halfW(0) - SIDE + 6, -CAP);
     for (let i = 0; i <= steps; i++) { const y = H * i / steps; outer.lineTo(W / 2 - halfW(y) - SIDE, y); }
-    outer.lineTo(W / 2 - halfW(H) - SIDE + 6, H + CAP_B);
-    outer.lineTo(W / 2 + halfW(H) + SIDE - 6, H + CAP_B);
+    outer.lineTo(W / 2 - halfW(H) - SIDE + 6, H + CAP);
+    outer.lineTo(W / 2 + halfW(H) + SIDE - 6, H + CAP);
     for (let i = steps; i >= 0; i--) { const y = H * i / steps; outer.lineTo(W / 2 + halfW(y) + SIDE, y); }
-    outer.lineTo(W / 2 + halfW(0) + SIDE - 8, -CAP_T);
+    outer.lineTo(W / 2 + halfW(0) + SIDE - 6, -CAP);
     outer.closePath();
     const inner = new Path2D();
     for (let i = 0; i <= steps; i++) { const y = H * i / steps; inner[i ? 'lineTo' : 'moveTo'](W / 2 - halfW(y), y); }
     for (let i = steps; i >= 0; i--) { const y = H * i / steps; inner.lineTo(W / 2 + halfW(y), y); }
     inner.closePath();
 
-    // アクリルの厚み部分
+    // アクリルの厚み(中身は完全にくり抜く)
     c.save();
-    c.fillStyle = 'rgba(255,255,255,0.28)';
-    c.fill(outer);
-    c.globalCompositeOperation = 'destination-out';
-    c.fillStyle = '#000';   // 中身の部分は完全にくり抜く
-    c.fill(inner);
+    c.fillStyle = 'rgba(255,255,255,0.32)'; c.fill(outer);
+    c.globalCompositeOperation = 'destination-out'; c.fillStyle = '#000'; c.fill(inner);
     c.restore();
-    // 中の透明な液体のうっすらした色
-    c.fillStyle = 'rgba(255,250,252,0.04)';
-    c.fill(inner);
-    // 上下ブロックのグラデーション
-    let g = c.createLinearGradient(0, -CAP_T, 0, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0.75)'); g.addColorStop(0.3, 'rgba(255,255,255,0.2)');
-    g.addColorStop(1, 'rgba(70,100,230,0.4)');
-    c.fillStyle = g; c.fillRect(-SIDE + 6, -CAP_T + 2, W + SIDE * 2 - 12, CAP_T - 2);
-    g = c.createLinearGradient(0, H, 0, H + CAP_B);
-    g.addColorStop(0, 'rgba(225,60,130,0.45)'); g.addColorStop(1, 'rgba(255,240,248,0.75)');
-    c.fillStyle = g; c.fillRect(-SIDE + 5, H, W + SIDE * 2 - 10, CAP_B - 2);
-    // 輪郭線
+    // 上下ブロックに中の液体の色が映り込む
+    const block = (y0, y1, colorAtEnd, col) => {
+      const g = c.createLinearGradient(0, colorAtEnd ? y1 : y0, 0, colorAtEnd ? y0 : y1);
+      g.addColorStop(0, rgb(col, 0.38)); g.addColorStop(0.5, 'rgba(255,255,255,0.12)'); g.addColorStop(1, 'rgba(255,255,255,0.7)');
+      c.fillStyle = g; c.fillRect(-SIDE + 5, y0 + 1, W + SIDE * 2 - 10, y1 - y0 - 2);
+    };
+    block(-CAP, 0, true, th.A[0]);
+    block(H, H + CAP, false, th.B[0]);
+    // 仕切り板
+    c.lineCap = 'round';
+    for (const [x1, y1, x2, y2] of SEG.slice(0, NPLATE)) {
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
+      c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 6; c.stroke();
+      c.strokeStyle = 'rgba(120,110,130,0.25)'; c.lineWidth = 1; c.stroke();
+    }
+    // 中央のノズル
+    for (const fl of [false, true]) {
+      const y = fl ? H - PLATE_Y - PLATE_V : PLATE_Y + PLATE_V, d = fl ? -1 : 1;
+      c.beginPath(); c.moveTo(W / 2 - HOLE, y); c.lineTo(W / 2 - HOLE + 1, y + 6 * d);
+      c.moveTo(W / 2 + HOLE, y); c.lineTo(W / 2 + HOLE - 1, y + 6 * d);
+      c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 2; c.stroke();
+    }
+    // 輪郭とハイライト
     c.lineJoin = 'round';
     c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineWidth = 2.2; c.stroke(outer);
-    c.strokeStyle = 'rgba(200,150,180,0.35)'; c.lineWidth = 1; c.stroke(inner);
+    c.strokeStyle = 'rgba(150,130,150,0.3)'; c.lineWidth = 1; c.stroke(inner);
     c.beginPath(); c.moveTo(W / 2 - halfW(0), 0); c.lineTo(W / 2 + halfW(0), 0);
     c.moveTo(W / 2 - halfW(H), H); c.lineTo(W / 2 + halfW(H), H);
-    c.strokeStyle = 'rgba(255,255,255,0.8)'; c.lineWidth = 1.5; c.stroke();
-    // 縦のハイライト
-    c.lineCap = 'round';
-    const hl = (off, wdt, alpha, y0, y1) => {
+    c.strokeStyle = 'rgba(255,255,255,0.85)'; c.lineWidth = 1.5; c.stroke();
+    const side = (off, wdt, alpha, y0, y1, right) => {
       c.beginPath();
-      for (let i = 0; i <= 24; i++) { const y = y0 + (y1 - y0) * i / 24; const x = W / 2 - halfW(y) + off;
-        i ? c.lineTo(x, y) : c.moveTo(x, y); }
+      for (let i = 0; i <= 24; i++) { const y = y0 + (y1 - y0) * i / 24;
+        const x = right ? W / 2 + halfW(y) + off : W / 2 - halfW(y) + off; i ? c.lineTo(x, y) : c.moveTo(x, y); }
       c.strokeStyle = `rgba(255,255,255,${alpha})`; c.lineWidth = wdt; c.stroke();
     };
-    hl(-6, 5, 0.85, 14, H - 30);
-    hl(6, 2, 0.5, 40, H * 0.55);
-    c.beginPath();
-    for (let i = 0; i <= 24; i++) { const y = 30 + (H - 80) * i / 24; const x = W / 2 + halfW(y) + 5;
-      i ? c.lineTo(x, y) : c.moveTo(x, y); }
-    c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 3; c.stroke();
-    c.fillStyle = 'rgba(255,255,255,0.9)';
-    c.beginPath(); c.roundRect(-SIDE + 14, -CAP_T + 8, W * 0.5, 5, 3); c.fill();
+    side(-6, 4, 0.8, -CAP + 10, H + CAP - 10, false);
+    side(5, 1.5, 0.45, 20, H - 20, false);
+    side(5, 3, 0.5, -CAP + 14, H + CAP - 14, true);
+    c.fillStyle = 'rgba(255,255,255,0.85)';
+    c.beginPath(); c.roundRect(-SIDE + 12, -CAP + 7, W * 0.55, 4, 2); c.fill();
+    c.beginPath(); c.roundRect(-SIDE + 12, H + CAP - 11, W * 0.4, 3, 2); c.fill();
   }
 
   // =========================================================
@@ -411,35 +487,50 @@
   // =========================================================
   let vw = 0, vh = 0, scale = 1, dpr = 1, homeX = 0, homeY = 0;
   let bx = 0, by = 0, bvx = 0, bvy = 0, tx = 0, ty = 0, dragging = false, grabX = 0, grabY = 0;
-  const OW = W + SIDE * 2, OH = H + CAP_T + CAP_B;
+  let ang = 0, angT = 0, angV = 0;          // 容器の回転(ひっくり返す)
+  const OW = W + SIDE * 2, OH = H + CAP * 2;
   function resize() {
     vw = innerWidth; vh = innerHeight;
     dpr = Math.min(2, window.devicePixelRatio || 1);
-    scale = Math.min((vh - 150) / OH, (vw * 0.78) / OW);
-    homeX = (vw - OW * scale) / 2; homeY = 64 + (vh - 150 - OH * scale) / 2 + 10;
+    scale = Math.min((vh - 150) / OH, (vw * 0.7) / OW);
+    homeX = (vw - OW * scale) / 2; homeY = 44 + (vh - 150 - OH * scale) / 2 + 12;
     if (!dragging) { bx = tx = homeX; by = ty = homeY; }
     bottleEl.style.width = OW * scale + 'px'; bottleEl.style.height = OH * scale + 'px';
-    glCv.style.left = SIDE * scale + 'px'; glCv.style.top = CAP_T * scale + 'px';
+    bottleEl.style.transformOrigin = `${OW * scale / 2}px ${OH * scale / 2}px`;
+    glCv.style.left = SIDE * scale + 'px'; glCv.style.top = CAP * scale + 'px';
     glCv.style.width = W * scale + 'px'; glCv.style.height = H * scale + 'px';
     glCv.width = Math.round(W * scale * dpr); glCv.height = Math.round(H * scale * dpr);
-    makeField(Math.round(glCv.width / 2), Math.round(glCv.height / 2)); // 濃度は半分の解像度で十分
+    makeField(Math.round(glCv.width / 2), Math.round(glCv.height / 2));
+    shadowEl.style.width = OW * scale * 1.3 + 'px'; shadowEl.style.height = 26 * scale + 'px';
     drawGlass(scale, dpr);
   }
   addEventListener('resize', resize);
 
   const stage = document.getElementById('stage');
+  let lastTap = 0;
   stage.addEventListener('pointerdown', e => {
     dragging = true; stage.setPointerCapture(e.pointerId);
-    grabX = bx - e.clientX; grabY = by - e.clientY;
-    tx = bx; ty = by;
+    grabX = bx - e.clientX; grabY = by - e.clientY; tx = bx; ty = by;
+    const now = performance.now();
+    if (now - lastTap < 300) flip();   // ダブルタップでもひっくり返す
+    lastTap = now;
   });
   stage.addEventListener('pointermove', e => { if (dragging) { tx = e.clientX + grabX; ty = e.clientY + grabY; } });
   const up = () => { dragging = false; };
   stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
 
+  function flip() { angT += Math.PI; }
+  document.getElementById('flip').addEventListener('click', flip);
+  document.getElementById('color').addEventListener('click', () => {
+    theme = (theme + 1) % THEMES.length;
+    const [b1, b2, g1, g2] = THEMES[theme].css, st = document.documentElement.style;
+    st.setProperty('--bg1', b1); st.setProperty('--bg2', b2); st.setProperty('--glow1', g1); st.setProperty('--glow2', g2);
+    drawGlass(scale, dpr);
+  });
+
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensor');
-  let sax = 0, say = 0, sensorOn = false;
+  let sax = 0, say = 0, gsx = 0, gsy = 1, sensorOn = false;
   if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-block';
   sBtn.addEventListener('click', async () => {
     try {
@@ -450,36 +541,49 @@
       addEventListener('devicemotion', e => {
         const a = e.acceleration, g = e.accelerationIncludingGravity;
         if (a && a.x != null) { sax = a.x; say = -a.y; }
-        if (g && g.x != null) {           // 端末の傾きで重力の向きを変える
-          const gx = -(g.x - (a ? a.x : 0)), gy = (g.y - (a ? a.y : 0));
-          const l = Math.hypot(gx, gy);
-          if (l > 2) { gX += (gx / l - gX) * 0.2; gY += (-gy / l - gY) * 0.2; }
+        if (g && g.x != null) {          // 端末の傾き = 重力の向き
+          const x = -(g.x - (a ? a.x : 0)), y = (g.y - (a ? a.y : 0));
+          const l = Math.hypot(x, y);
+          if (l > 2) { gsx += (x / l - gsx) * 0.2; gsy += (-y / l - gsy) * 0.2; }
         }
       });
     } catch (_) {}
   });
-  document.getElementById('reset').addEventListener('click', init);
 
   // =========================================================
   // メインループ(物理は60Hz固定、描画は端末のリフレッシュレート)
   // =========================================================
   const fpsEl = document.getElementById('fps');
-  let last = performance.now(), acc = 0, pvx = 0, pvy = 0, shown = 0, fpsT = 0, fpsN = 0, simMs = 0;
+  let dripT = 0, last = performance.now(), acc = 0, pvx = 0, pvy = 0, fpsT = 0, fpsN = 0, simMs = 0;
   function tick() {
     if (!dragging) { tx = homeX; ty = homeY; }
     const k = dragging ? 0.55 : 0.12;
     bvx = (tx - bx) * k; bvy = (ty - by) * k;
     bx += bvx; by += bvy;
-    let fx = (bvx - pvx) / scale + sax * 0.3, fy = (bvy - pvy) / scale + say * 0.3;
+    // 回転はばねでゆっくり
+    angV += (angT - ang) * 0.012; angV *= 0.86; ang += angV;
+    const co = Math.cos(ang), si = Math.sin(ang);
+    // 画面の向き → 容器の向き
+    gbx = gsx * co + gsy * si; gby = -gsx * si + gsy * co;
+    const sx = (bvx - pvx) / scale + sax * 0.3, sy = (bvy - pvy) / scale + say * 0.3;
+    let fx = sx * co + sy * si, fy = -sx * si + sy * co;
     pvx = bvx; pvy = bvy;
     const lim = 16;
     fx = Math.max(-lim, Math.min(lim, fx)); fy = Math.max(-lim, Math.min(lim, fy));
     ax = -fx * 0.5 / SUB; ay = -fy * 0.5 / SUB;
+    // 上側(重力に対して下向き)のノズルだけふたを開け閉めする
+    dripT += 1 / 60;
+    const open = (dripT % DRIP_PERIOD) < DRIP_OPEN;
+    lidOn[0] = gby > 0.3 && !open;
+    lidOn[1] = gby < -0.3 && !open;
+    nozzleY = !open ? -1 : gby > 0.3 ? PLATE_Y + PLATE_V - 8 : gby < -0.3 ? H - PLATE_Y - PLATE_V + 8 : -1;
+    lidOn[2] = lidOn[3] = gby > 0;
+    lidOn[4] = lidOn[5] = gby <= 0;
     for (let s = 0; s < SUB; s++) substep();
     moveBubbles();
   }
   function loop(now) {
-    let dt = Math.min(0.1, (now - last) / 1000); last = now;
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
     acc += dt;
     const t0 = performance.now();
     let n = 0;
@@ -487,7 +591,8 @@
     if (n === 3) acc = 0;
     simMs = simMs * 0.9 + (performance.now() - t0) * 0.1;
     const tilt = Math.max(-0.2, Math.min(0.2, bvx * 0.008));
-    bottleEl.style.transform = `translate3d(${bx}px,${by}px,0) rotate(${tilt}rad)`;
+    bottleEl.style.transform = `translate3d(${bx}px,${by}px,0) rotate(${ang + tilt}rad)`;
+    shadowEl.style.transform = `translate3d(${bx - OW * scale * 0.15}px,${homeY + OH * scale - 10 * scale}px,0)`;
     render();
     fpsN++; fpsT += dt;
     if (fpsT > 1) { fpsEl.textContent = `${Math.round(fpsN / fpsT)}fps · 物理 ${simMs.toFixed(1)}ms · ${N}粒`; fpsN = 0; fpsT = 0; }
@@ -495,7 +600,7 @@
   }
 
   resize(); init();
-  window.__shake = { N: () => N, X, Y, T, setA(x, y) { ax = x; ay = y; }, tick };
+  window.__shake = { N: () => N, X, Y, T, tick, flip };
   requestAnimationFrame(loop);
 })();
 </script>
