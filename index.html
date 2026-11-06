@@ -115,7 +115,7 @@
   const K = 0.24, KN = 0.45;                // 圧力・近距離圧力
   const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
   const GRAV = [0.0095, -0.0095];          // A(青)は透明な液体より重くて沈む / B(ピンク)は軽くて昇る
-  const DRAG = 0.972, VMAX = 6;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
+  const DRAG = 0.972, VMAX = 3;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
   const MAXN = 1600;
   const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
   const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
@@ -183,10 +183,13 @@
   const R2 = R * R;
 
   const PM = 7;   // 仕切りの厚み(液体の見た目がはみ出さないよう少し厚め)
+  // 仕切りやふたに押し戻された粒は、押し戻された向きの速さを消す(はじき飛ばされないように)
+  const HIT = new Uint8Array(MAXN), HNX = new Float32Array(MAXN), HNY = new Float32Array(MAXN);
   function collidePlates(i) {
-    const m = PM;
+    HIT[i] = 0;
     for (let s = 0; s < NS; s++) {
       if (s >= NPLATE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
+      const m = s >= NPLATE ? 2 : PM;   // ふたは薄く: 閉じたときに穴の中の粒が大きくずれない
       const x = X[i], y = Y[i];
       const s0 = (PX[i] - SX[s]) * SNX[s] + (PY[i] - SY[s]) * SNY[s];
       const s1 = (x - SX[s]) * SNX[s] + (y - SY[s]) * SNY[s];
@@ -198,12 +201,14 @@
         // 通り抜け防止: 前の位置の側へ戻す
         const side = s0 > 0 ? 1 : -1;
         X[i] = qx + SNX[s] * m * side; Y[i] = qy + SNY[s] * m * side;
+        HIT[i] = 1; HNX[i] = SNX[s] * side; HNY[i] = SNY[s] * side;
       } else if (d2 < m * m) {
         const d = Math.sqrt(d2);
         let nx, ny;
         if (d < 1e-3) { const side = s0 >= 0 ? 1 : -1; nx = SNX[s] * side; ny = SNY[s] * side; }
         else { nx = dx / d; ny = dy / d; }
         X[i] = qx + nx * m; Y[i] = qy + ny * m;
+        HIT[i] = 1; HNX[i] = nx; HNY[i] = ny;
       }
     }
   }
@@ -275,8 +280,13 @@
       }
       X[i] = x; Y[i] = y;
       let vx = x - PX[i], vy = y - PY[i];
+      if (HIT[i]) { const vn = vx * HNX[i] + vy * HNY[i]; vx -= vn * HNX[i]; vy -= vn * HNY[i]; }
       const v2 = vx * vx + vy * vy;
-      if (v2 > VMAX * VMAX) { const s = VMAX / Math.sqrt(v2); vx *= s; vy *= s; }
+      // 穴の中ではゆっくり: 勢いよく噴き出さず、じわっと出て滴になる
+      const inHole = Math.abs(x - W / 2) < HOLE + 4 &&
+        (Math.abs(y - PLATE_Y - PLATE_V) < 16 || Math.abs(y - H + PLATE_Y + PLATE_V) < 16);
+      const vmax = inHole ? 0.8 : VMAX;
+      if (v2 > vmax * vmax) { const s = vmax / Math.sqrt(v2); vx *= s; vy *= s; }
       VX[i] = vx; VY[i] = vy;
     }
   }
@@ -318,7 +328,7 @@
     void main(){ vT = a.z; gl_Position = vec4(a.x/uSize.x*2.-1., 1.-a.y/uSize.y*2., 0., 1.); gl_PointSize = uPt; }`,
   `precision mediump float; varying float vT;
     void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p,p); if(r2>1.) discard;
-      float v = 1.-r2; v = v*v*v*0.58;
+      float v = 1.-r2; v = v*v*v*0.44;   // 1粒だけ(しぶき)はしきい値に届かず見えない。滴になると見える
       gl_FragColor = vT < .5 ? vec4(v,0.,0.,0.) : vT < 1.5 ? vec4(0.,v,0.,0.) : vec4(0.,0.,v*1.9,0.); }`);
 
   const compP = prog(`
