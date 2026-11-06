@@ -112,7 +112,7 @@
   // 青は上の部屋から落ち、ピンクは下の部屋から昇る。どちらも真ん中の穴だけを通る。透明な液体は抵抗として扱う
   // =========================================================
   const R = 14, SP = 6.2, SUB = 2;
-  const K = 0.24, KN = 0.45, KC = 0.025;    // 圧力・近距離圧力・異色どうしの弱い反発
+  const K = 0.24, KN = 0.45;                // 圧力・近距離圧力
   const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
   const GRAV = [0.0095, -0.0095];          // A(青)は透明な液体より重くて沈む / B(ピンク)は軽くて昇る
   const DRAG = 0.972, VMAX = 6;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
@@ -139,7 +139,8 @@
     // 青は上の部屋、ピンクは下の部屋に、それぞれ満タンに入れる(上下対称)
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 3; yy -= sp * 0.866, row++) {
+      // 部屋は7割ほど: 落ちてきた滴が待たずに入れるよう、すき間を残す
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 16; yy -= sp * 0.866, row++) {
         const y = t ? H - yy : yy;
         const lim = halfW(y) - 3;
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
@@ -178,7 +179,7 @@
 
   let gbx = 0, gby = 1;     // 容器から見た重力の向き
   let ax = 0, ay = 0;       // 振ったときの慣性加速度
-  const nbJ = new Int32Array(256), nbQ = new Float32Array(256), nbS = new Uint8Array(256);
+  const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
   const R2 = R * R;
 
   const PM = 7;   // 仕切りの厚み(液体の見た目がはみ出さないよう少し厚め)
@@ -234,26 +235,22 @@
             if (j === i) continue;
             const dx = X[j] - xi, dy = Y[j] - yi, d2 = dx * dx + dy * dy;
             if (d2 >= R2 || n >= 256) continue;
-            const q = Math.sqrt(d2) / R, a = 1 - q, same = T[j] === ti;
-            if (same) { rho += a * a; rhoN += a * a * a; ws += a; wx += a * X[j]; wy += a * Y[j]; }
-            nbJ[n] = j; nbQ[n] = q; nbS[n] = same ? 1 : 0; n++;
+            // 青とピンクは奥行きが違うので、お互いに押し合わずにすれ違う(同じ色どうしだけ計算する)
+            if (T[j] !== ti) continue;
+            const q = Math.sqrt(d2) / R, a = 1 - q;
+            rho += a * a; rhoN += a * a * a; ws += a; wx += a * X[j]; wy += a * Y[j];
+            nbJ[n] = j; nbQ[n] = q; n++;
           }
         }
       }
       const pr = K * (rho - rho0), prN = KN * rhoN;
-      const nearNoz = Math.abs(xi - W / 2) < 34 && (Math.abs(yi - PLATE_Y - PLATE_V) < 34 || Math.abs(yi - H + PLATE_Y + PLATE_V) < 34);
       let sx = 0, sy = 0;
       for (let m = 0; m < n; m++) {
         const j = nbJ[m], q = nbQ[m], a = 1 - q;
         let dx = X[j] - X[i], dy = Y[j] - Y[i];
         const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
         dx /= d; dy /= d;
-        // 同じ色: 圧力+表面張力 / 違う色: 近いときだけ弱く押し合う(重なりながらすれ違える)
-        // 違う色どうしは奥行きが違うので、近いときだけ弱く押し合い、重なりながらすれ違う
-        // (ノズルのまわりでは押し合わず、どちらの色もノズルにたどり着ける)
-        const D = nbS[m] ? (pr * a + prN * a * a) * 0.5
-                : nearNoz ? 0
-                : (q < 0.7 ? KC * a * a * 0.5 : 0);
+        const D = (pr * a + prN * a * a) * 0.5;
         X[j] += dx * D; Y[j] += dy * D;
         sx -= dx * D; sy -= dy * D;
       }
