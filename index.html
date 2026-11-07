@@ -89,7 +89,7 @@
   const NPLATE = 8, NS = SEG.length;
   const lidMask = new Uint8Array(2);   // ビット0=Aを止める ビット1=Bを止める
   const crossOK = [false, false];      // 色ごと: ノズルの上と下の液がつながってよいか(ぶら下がる滴をつくる間だけ)
-  const DRIP_PERIOD = 2.0, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)
+  const DRIP_PERIOD = 2.4, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)
   const SX = new Float32Array(NS), SY = new Float32Array(NS), SDX = new Float32Array(NS), SDY = new Float32Array(NS),
         SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
   SEG.forEach(([x1, y1, x2, y2], i) => {
@@ -118,7 +118,7 @@
   const ST = 0.03;                          // 表面張力(表面を縮めて丸い滴にする)
   const GRAV = [0.0095, 0.0105];           // どちらも透明な液体より重くて沈む。B(ピンク)が少しだけ重い
   const DRAG = 0.972, VMAX = 3;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
-  const DRAG_THIN = 0.962;        // 真ん中の薄いすき間では、壁にはさまれてさらにゆっくり
+  const DRAG_THIN = 0.955;        // 真ん中の薄いすき間では、壁にはさまれてさらにゆっくり
   const MAXN = 1600;
   const X = new Float32Array(MAXN), Y = new Float32Array(MAXN);
   const PX = new Float32Array(MAXN), PY = new Float32Array(MAXN);
@@ -339,8 +339,11 @@
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
 
   const splatP = prog(`
-    attribute vec3 a; uniform vec2 uSize; uniform float uPt; varying float vT;
-    void main(){ vT = a.z; gl_Position = vec4(a.x/uSize.x*2.-1., 1.-a.y/uSize.y*2., 0., 1.); gl_PointSize = uPt; }`,
+    attribute vec3 a; uniform vec2 uSize; uniform float uPt; uniform vec2 uMid; varying float vT;
+    void main(){ vT = a.z; gl_Position = vec4(a.x/uSize.x*2.-1., 1.-a.y/uSize.y*2., 0., 1.);
+      // 真ん中の薄いすき間では、滴が前後の壁に押されて平たく広がり、正面からは大きな丸に見える
+      float tm = vT < 1.5 ? smoothstep(uMid.x, uMid.x + 18., a.y) * (1. - smoothstep(uMid.y - 18., uMid.y, a.y)) : 0.;
+      gl_PointSize = uPt * (1. + .38 * tm); }`,
   `precision mediump float; varying float vT;
     void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p,p); if(r2>1.) discard;
       float v = 1.-r2; v = v*v*v*0.44;   // 1粒だけ(しぶき)はしきい値に届かず見えない。滴になると見える
@@ -417,7 +420,7 @@
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fTex, 0);
   }
 
-  const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt') };
+  const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt'), mid: gl.getUniformLocation(splatP, 'uMid') };
   const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uMid']) uC[n] = gl.getUniformLocation(compP, n);
   const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
 
@@ -430,6 +433,7 @@
     gl.useProgram(splatP);
     gl.uniform2f(uS.size, W, H);
     gl.uniform1f(uS.pt, R * 2.0 * fW / W);
+    gl.uniform2f(uS.mid, PLATE_Y + PLATE_V, H - PLATE_Y - PLATE_V);
     gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, pData.subarray(0, N * 3));
     gl.enableVertexAttribArray(aS);
