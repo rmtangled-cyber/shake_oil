@@ -152,15 +152,18 @@
     N = 0;
     // 上の部屋に2色とも入れる: 青はほぼ満タン、ピンクはV字の底に(奥行きが違うので重なって見える)
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
-    // 写真の実物と同じく、受け皿の中で2色は左右に並ぶ(境目は少し斜め)
-    for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 10; yy -= sp * 0.866, row++) {   // 上に液面が見えるぶん、少し余白を残す
-      const y = yy;
-      const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
-      for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
-        const top = plateTop(x) - 4;
-        if (yy > top || N >= MAXN) continue;
-        X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
-        VX[N] = VY[N] = 0; T[N] = x < W / 2 + (yy - 50) * 0.6 ? 0 : 1; N++;
+    // 青とピンクは表と裏の別の層にあるので、同じ場所に重ねて入れる
+    for (const t of [0, 1]) {
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 10; yy -= sp * 0.866, row++) {   // 上に液面が見えるぶん、少し余白を残す
+        const y = yy;
+        const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
+        for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
+          const top = plateTop(x) - 4;
+          if (yy > top || N >= MAXN) continue;
+          if (t === 1 && top - yy > (top - DEPTH - 10) * 0.45) continue;   // ピンクはV字の底側
+          X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
+          VX[N] = VY[N] = 0; T[N] = t; N++;
+        }
       }
     }
     for (let i = 0; i < N; i++) ROOM[i] = roomOf(X[i], Y[i]);
@@ -192,7 +195,7 @@
 
   let gbx = 0, gby = 1;     // 容器から見た重力の向き
   let ax = 0, ay = 0;       // 振ったときの慣性加速度
-  const nbJ = new Int32Array(256), nbQ = new Float32Array(256), nbX = new Uint8Array(256);
+  const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
   const R2 = R * R;
 
   const PM = 7;   // 仕切りの厚み(液体の見た目がはみ出さないよう少し厚め)
@@ -231,8 +234,7 @@
   const nozY = [-1, -1];   // 色ごとの、開いているノズルの入り口(なければ -1)
   function substep() {
     for (let i = 0; i < N; i++) {
-      // 厚い部屋の中では2色の重さは同じ(左右に並んだまま)。真ん中では色ごとに落ちる速さが少し違う
-      let g = ROOM[i] !== 1 ? 0.01 : GRAV[T[i]] * DSCALE[i];
+      let g = GRAV[T[i]] * DSCALE[i];
       const nz = nozY[T[i]];
       if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 4;
       // 薄いのは真ん中の落ちる部分だけ。仕切りの上に乗った液は、ふつうの速さで端へ流れる
@@ -253,7 +255,6 @@
       const c = cellOf[i], cx = c % GW, cy = (c / GW) | 0;
       let rho = 0, rhoN = 0, n = 0, ws = 0, wx = 0, wy = 0;
       const inCup = ROOM[i] !== 1;
-      const nearNoz = false;
       for (let gy = cy - 1; gy <= cy + 1; gy++) {
         if (gy < 0 || gy >= GH) continue;
         for (let gx = cx - 1; gx <= cx + 1; gx++) {
@@ -264,22 +265,14 @@
             if (j === i) continue;
             const dx = X[j] - xi, dy = Y[j] - yi, d2 = dx * dx + dy * dy;
             if (d2 >= R2 || n >= 256) continue;
-            if (T[j] !== ti) {
-              // 違う色: 薄い真ん中では奥行きが違うのでぶつからずにすれ違う。
-              // 厚い部屋(コップ)の中では混ざらない2つの液として押しのけ合い、層になる(ノズルのまわりは除く)
-              // 部屋の中では2色をひとつの液として圧力を計算する: 液面が平らになり、重さの差で層に分かれる
-              if (!inCup || ROOM[j] !== ROOM[i] || nearNoz) continue;
-              const q = Math.sqrt(d2) / R, a = 1 - q;
-              rho += a * a; rhoN += a * a * a;
-              nbJ[n] = j; nbQ[n] = q; nbX[n] = 1; n++;
-              continue;
-            }
+            // 青とピンクは表と裏の別の層にあるので、どこでもお互いにぶつからない(同じ色どうしだけ計算する)
+            if (T[j] !== ti) continue;
             // 仕切りの向こう側(別の部屋)の液とは引っぱり合わない: 出た滴が穴へ引き戻されない
             // ぶら下がる滴をつくっている間だけ、ノズルの上と下の液がつながる。切れたあとは引き戻されない
             if (ROOM[j] !== ROOM[i] && !(crossOK[ti] && Math.abs(xi - W / 2) < HOLE + 16)) continue;
             const q = Math.sqrt(d2) / R, a = 1 - q;
             rho += a * a; rhoN += a * a * a; ws += a; wx += a * X[j]; wy += a * Y[j];
-            nbJ[n] = j; nbQ[n] = q; nbX[n] = 0; n++;
+            nbJ[n] = j; nbQ[n] = q; n++;
           }
         }
       }
@@ -399,7 +392,7 @@
       float ao = smoothstep(.42, .58, c.b);
       // 厚い部屋の液は奥行きのある塊: 少し上から見ているので、手前の面の上に「液の上面」が見える。
       // 下に向かって奥行きぶん調べ、その位置の液(厚い部屋の液だけ)の上面がここに見えるかを求める
-      float topD = 0., hitK = 9., hA = 0., hB = 0.;
+      float topD = 0., hitK = 9., mA = 0., mB = 0.;
       // 上下の部屋のまわりで、手前の面に隠れていない所だけ調べる(真ん中ではすぐ終わるので軽い)
       float front0 = max(ab, ap);
       bool zone = w.y < uMid.x + 18. || w.y > uMid.y - 18. - uDepth;
@@ -411,7 +404,8 @@
         float thick = 1. - smoothstep(uMid.x, uMid.x + 18., ys) * (1. - smoothstep(uMid.y - 18., uMid.y, ys));
         vec4 cs = texture2D(uF, vUv - vec2(0., sd / uSize.y));
         float d = max(cs.r, cs.g) * thick;
-        if (d > TH && hitK > 8.) { hitK = float(k); hA = cs.r; hB = cs.g; }
+        if (d > TH && hitK > 8.) hitK = float(k);
+        mA = max(mA, cs.r * thick); mB = max(mB, cs.g * thick);
         topD = max(topD, d);
       }
       float front = max(ab, ap);
@@ -438,9 +432,6 @@
       // 色の重なり: 半透明の色フィルムを重ねたように掛け合わせる(青×ピンク → 濃紺)
       vec3 col = mix(vec3(1.), colB, ap*.96) * mix(vec3(1.), colA, ab*.96);
       col *= mix(1., .88, ab*ap);
-      // 厚い部屋の中では2色は押しのけ合って層になっているので、境目は多いほうの色を見せる(茶色く濁らない)
-      vec3 dom = mix(colB, colA, smoothstep(-.08, .08, c.r - c.g));
-      col = mix(col, dom, ab*ap*(1.-tm)*.85);
       // ツヤ: 厚い部屋は強くはっきり、薄い円盤は縁に小さく
       vec3 L = normalize(vec3(-.55,.6,.58)), Hh = normalize(L+vec3(0.,0.,1.));
       float sa = pow(max(dot(na,Hh),0.), 60.)*ab, sb = pow(max(dot(nb,Hh),0.), 60.)*ap;
@@ -454,13 +445,15 @@
       float alpha = max(max(ab*mix(.97,.9,tm), ap*mix(.96,.88,tm)), ao*(.15 + .6*bubbleRim + bubbleSpec));
       // 液の上面: 明るい色の平らな面。手前の縁ほど光を映して明るく、奥の縁に細い濃い線
       if (uTop > .003) {
-        bool isA = hA >= hB;
-        vec3 lite = isA ? uA0 : uB0, deep = isA ? uA1 : uB1;
+        // 層ごとの上面。2つの層が重なって見えるところは、手前の面と同じく色を掛け合わせる
+        float tA = smoothstep(TH - .05, TH + .05, mA), tB = smoothstep(TH - .05, TH + .05, mB);
         float f = (hitK - 1.) / 5.;                             // 0=手前の縁 1=奥の縁
-        vec3 tcol = mix(mix(lite, vec3(1.), .38), lite, f * .7);
+        vec3 liteA = mix(mix(uA0, vec3(1.), .38), uA0, f * .7), liteB = mix(mix(uB0, vec3(1.), .38), uB0, f * .7);
+        float eA = smoothstep(TH + .1, TH, mA) * tA, eB = smoothstep(TH + .1, TH, mB) * tB;   // 上面の奥の縁
+        liteA = mix(liteA, uA1, eA * .75); liteB = mix(liteB, uB1, eB * .75);
+        vec3 tcol = mix(vec3(1.), liteB, tB * .96) * mix(vec3(1.), liteA, tA * .96);
+        tcol *= mix(1., .88, tA * tB);
         tcol += pow(1. - abs(f - .25) * 2.2, 6.) * .12;       // 面に映る光のすじ
-        float backEdge = smoothstep(TH + .1, TH, topD);         // 上面の奥の縁
-        tcol = mix(tcol, deep, backEdge * .75);
         col = mix(col, tcol, uTop);
         alpha = max(alpha, uTop * .93);
       }
@@ -756,7 +749,8 @@
     // 開いている間に液がじわっと出て、ノズルの先に涙形にぶら下がり、滴ひとつ分になったら切れて落ちる
     dripT += 1 / 60;
     const f = gby > 0.3 ? 0 : gby < -0.3 ? 1 : -1;   // いま上側にある仕切り(0=容器の上側 1=下側)
-    const phaseA = dripT % DRIP_PERIOD, phaseB = (dripT + DRIP_PERIOD / 2) % DRIP_PERIOD;
+    // ピンクは量が青の半分ほどなので、2回に1回だけ出す(最後まで交互に落ちるように)
+    const phaseA = dripT % DRIP_PERIOD, phaseB = (dripT + DRIP_PERIOD / 2) % (DRIP_PERIOD * 2);
     // 滴の大きさは毎回ばらばら(写真の実物と同じく大小が混ざる)
     if (phaseA < 1 / 60) { dropDone[0] = false; dropSize[0] = DROP_N * (0.6 + Math.random() * 0.9); }
     if (phaseB < 1 / 60) { dropDone[1] = false; dropSize[1] = DROP_N * (0.6 + Math.random() * 0.9); }
