@@ -154,13 +154,13 @@
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
     // 青とピンクは表と裏の別の層にあるので、同じ場所に重ねて入れる
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 10; yy -= sp * 0.866, row++) {   // 上に液面が見えるぶん、少し余白を残す
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > SKIRT_END + 10; yy -= sp * 0.866, row++) {   // 縦の仕切りの上の端より少し下まで(あふれないように)
         const y = yy;
         const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
           const top = plateTop(x) - 4;
           if (yy > top || N >= MAXN) continue;
-          if (t === 1 && top - yy > (top - DEPTH - 10) * 0.45) continue;   // ピンクはV字の底側
+          if (t === 1 && top - yy > (top - SKIRT_END - 10) * 0.45) continue;   // ピンクはV字の底側
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
           VX[N] = VY[N] = 0; T[N] = t; N++;
         }
@@ -302,19 +302,14 @@
       if (y < m) y = m; else if (y > H - m) y = H - m;
       const lim = halfW(y) - m;
       if (x < W / 2 - lim) x = W / 2 - lim; else if (x > W / 2 + lim) x = W / 2 + lim;
-      // 漏れ防止: 真ん中の穴以外で別の場所へ移っていたら、このステップの動きを取り消す
-      // 出す側の部屋で、縦の仕切りの外側(角)に入った液は、ゆるい坂を滑るように部屋の内側へ戻す
-      // (下は左右の通り道だが、出す側の部屋からは真ん中しか通れないので、角に取り残されないように)
-      const rel = gby >= 0 ? 0 : 2, dxc = x - W / 2;
-      if (ROOM[i] === rel && Math.abs(dxc) > PLATE_HW - 3) x -= Math.sign(dxc) * 0.45;
+      // すり抜け防止: 仕切りの板そのものを通り抜けて別の場所へ移っていたら、このステップの動きを取り消す
+      // (穴やすき間を通るのは自由。通りやすさは仕切りの形と重さで自然に決まる)
       const r = roomOf(x, y);
       if (r !== ROOM[i]) {
-        // 通ってよいのは、真ん中のノズルか、スカートの先(容器の端の近く)だけ
+        // 実際に開いているのは、真ん中の穴と、縦の仕切りの先(容器の端の近く)のすき間
         const viaHole = Math.abs(x - W / 2) < HOLE + 2 && Math.abs(PX[i] - W / 2) < HOLE + 2;
         const nearEnd = (yy) => yy < SKIRT_END + 8 || yy > H - SKIRT_END - 8;
-        // 左右の通り道は、受け取る側の部屋に入る向きだけ通れる(上の部屋からは真ん中だけ)
-        const intoLower = gby >= 0 ? r === 2 : r === 0;
-        const viaSkirt = nearEnd(y) && nearEnd(PY[i]) && ROOM[i] === 1 && intoLower;
+        const viaSkirt = nearEnd(y) && nearEnd(PY[i]);
         if (viaHole || viaSkirt) ROOM[i] = r;
         else { x = PX[i]; y = PY[i]; }
       }
