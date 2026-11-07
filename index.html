@@ -61,7 +61,7 @@
   const PLATE_Y = 76, PLATE_V = 20;         // 仕切り: 端の高さと斜面の深さ(たまる部屋は小さく、滴の通り道を広く)
   const HOLE = 11;                          // 中央の穴(ノズル)の半幅
   const GAP = 18;                           // 仕切りのスカートと壁の間の通り道の幅(上下とも開いている)
-  const DEPTH = 16;                         // 厚い部屋(上下)の奥行きが、少し上から見たときに見える量
+  const DEPTH = 10;                         // 厚い部屋(上下)の奥行きが、少し上から見たときに見える量
   const SKIRT_END = 26;                     // スカートの先端(容器の端からこれだけ手前で止まり、通り道がつながる)
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
@@ -154,13 +154,13 @@
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
     // 青とピンクは表と裏の別の層にあるので、同じ場所に重ねて入れる
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > SKIRT_END + 10; yy -= sp * 0.866, row++) {   // 縦の仕切りの上の端より少し下まで(あふれないように)
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 2; yy -= sp * 0.866, row++) {   // 縦の仕切りの上の端より上までたっぷり(溢れないのは界面張力のおかげ)
         const y = yy;
         const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
           const top = plateTop(x) - 4;
           if (yy > top || N >= MAXN) continue;
-          if (t === 1 && top - yy > (top - SKIRT_END - 10) * 0.45) continue;   // ピンクはV字の底側
+          if (t === 1 && top - yy > (top - DEPTH - 2) * 0.45) continue;   // ピンクはV字の底側
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
           VX[N] = VY[N] = 0; T[N] = t; N++;
         }
@@ -195,6 +195,28 @@
 
   let gbx = 0, gby = 1;     // 容器から見た重力の向き
   let ax = 0, ay = 0;       // 振ったときの慣性加速度
+
+  // ---- 横のすき間の界面張力 ----
+  // すき間(縦の仕切りと壁の間)にいるか
+  function inChan(x, y) {
+    if (Math.abs(x - W / 2) < PLATE_HW) return false;
+    return (y > SKIRT_END && y < PLATE_Y) || (y > H - PLATE_Y && y < H - SKIRT_END);
+  }
+  // すき間に入れるか: 入口の上(重力と反対向き)に積み重なっている同じ色の液の量(=押す力)で決める。
+  // 強く振ったときは、その勢いで膜を破って入れる
+  const GAP_STRONG = 34, GAP_WEAK = 2, SHAKE_BREAK = 0.04;
+  function canEnterGap(i, need) {
+    if (Math.abs(ax) + Math.abs(ay) > SHAKE_BREAK) return true;
+    const gl = Math.hypot(gbx, gby) || 1, ux = -gbx / gl, uy = -gby / gl;
+    let head = 0;
+    for (let j = 0; j < N; j++) {
+      if (T[j] !== T[i]) continue;
+      const dx = X[j] - X[i], dy = Y[j] - Y[i];
+      const along = dx * ux + dy * uy, across = Math.abs(dx * uy - dy * ux);
+      if (along > -2 && along < 90 && across < 14) { if (++head >= need) return true; }
+    }
+    return false;
+  }
   const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
   const R2 = R * R;
 
@@ -304,6 +326,14 @@
       if (x < W / 2 - lim) x = W / 2 - lim; else if (x > W / 2 + lim) x = W / 2 + lim;
       // すり抜け防止: 仕切りの板そのものを通り抜けて別の場所へ移っていたら、このステップの動きを取り消す
       // (穴やすき間を通るのは自由。通りやすさは仕切りの形と重さで自然に決まる)
+      // 横のすき間(縦の仕切りと壁の間の細い通り道)の入口: 色の液が細いすき間へ入るには、
+      // 透明な液との境目の膜(界面張力)を押し広げる必要がある。重さの差が小さいので、ふつうは入れない
+      //   部屋の側からの入口: 強く押し返す(強く振る・大きく傾けたときだけ入れる)
+      //   真ん中の側からの入口(山型の坂を滑り下りた先): 弱く押し返す
+      if (inChan(x, y) && !inChan(PX[i], PY[i])) {
+        const fromEnd = PY[i] < SKIRT_END + 4 || PY[i] > H - SKIRT_END - 4;
+        if (!canEnterGap(i, fromEnd ? GAP_STRONG : GAP_WEAK)) { x = PX[i]; y = PY[i]; }
+      }
       const r = roomOf(x, y);
       if (r !== ROOM[i]) {
         // 実際に開いているのは、真ん中の穴と、縦の仕切りの先(容器の端の近く)のすき間
@@ -422,8 +452,10 @@
       float tm = smoothstep(uMid.x, uMid.x + 18., w.y) * (1. - smoothstep(uMid.y - 18., uMid.y, w.y));
       // 厚い部屋: 液が厚いぶん深く濃い色。縁ほどさらに濃く、中は光が通って少し明るい(立体感)
       float da = smoothstep(TH, .98, c.r), db = smoothstep(TH, .98, c.g);
-      float ea = clamp(.62 + (1.-na.z)*.9 - da*.15 + la*.3, 0., 1.);
-      float eb = clamp(.62 + (1.-nb.z)*.9 - db*.15 + lb*.3, 0., 1.);
+      // 上を向いた縁(上面へつながる所)は暗くしない: 手前の面と上面がつなぎ目なくなじむ
+      float upA = smoothstep(.1, .5, na.y), upB = smoothstep(.1, .5, nb.y);
+      float ea = clamp(.62 + ((1.-na.z)*.9 + la*.3) * (1. - .85*upA) - da*.15, 0., 1.);
+      float eb = clamp(.62 + ((1.-nb.z)*.9 + lb*.3) * (1. - .85*upB) - db*.15, 0., 1.);
       // 薄いすき間: 押しつぶされた円盤はほぼ均一な明るい色に、細い縁取り
       ea = mix(ea, clamp(.06 + la*.85, 0., 1.), tm);
       eb = mix(eb, clamp(.06 + lb*.85, 0., 1.), tm);
@@ -439,22 +471,21 @@
       float bubbleSpec = ao * pow(max(dot(no,Hh),0.), 30.);
       col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec + (sa+sb)*mix(1., .55, tm) + soft;
       // 手前の面の上の縁: 上面との角が光を受けて明るく光る
-      float rimUp = max(la * smoothstep(.15, .55, na.y), lb * smoothstep(.15, .55, nb.y)) * (1. - tm);
-      col = mix(col, vec3(1.), rimUp * .45);
       float alpha = max(max(ab*mix(.97,.9,tm), ap*mix(.96,.88,tm)), ao*(.15 + .6*bubbleRim + bubbleSpec));
       // 液の上面: 明るい色の平らな面。手前の縁ほど光を映して明るく、奥の縁に細い濃い線
       if (uTop > .003) {
         // 層ごとの上面。2つの層が重なって見えるところは、手前の面と同じく色を掛け合わせる
         float tA = smoothstep(TH - .05, TH + .05, mA), tB = smoothstep(TH - .05, TH + .05, mB);
         float f = (hitK - 1.) / 5.;                             // 0=手前の縁 1=奥の縁
-        vec3 liteA = mix(mix(uA0, vec3(1.), .38), uA0, f * .7), liteB = mix(mix(uB0, vec3(1.), .38), uB0, f * .7);
-        float eA = smoothstep(TH + .1, TH, mA) * tA, eB = smoothstep(TH + .1, TH, mB) * tB;   // 上面の奥の縁
-        liteA = mix(liteA, uA1, eA * .75); liteB = mix(liteB, uB1, eB * .75);
+        // 上面の色は手前の面の上の縁とほぼ同じ色から始め、奥へ向かって少し明るく、ふんわり薄くなる(線は引かない)
+        vec3 liteA = mix(mix(uA0, uA1, .62), mix(uA0, vec3(1.), .2), f * .8);
+        vec3 liteB = mix(mix(uB0, uB1, .62), mix(uB0, vec3(1.), .2), f * .8);
         vec3 tcol = mix(vec3(1.), liteB, tB * .96) * mix(vec3(1.), liteA, tA * .96);
         tcol *= mix(1., .88, tA * tB);
-        tcol += pow(1. - abs(f - .25) * 2.2, 6.) * .12;       // 面に映る光のすじ
-        col = mix(col, tcol, uTop);
-        alpha = max(alpha, uTop * .93);
+        tcol += pow(max(1. - abs(f - .35) * 2.5, 0.), 4.) * .07;   // 面に映るやわらかい光
+        float fade = uTop * mix(.93, .25, f * f);
+        col = mix(col, tcol, fade);
+        alpha = max(alpha, fade);
       }
       alpha = clamp(alpha + (sa+sb)*.5, 0., 1.);
       gl_FragColor = vec4(min(col, vec3(1.))*alpha, alpha);
