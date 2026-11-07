@@ -303,6 +303,10 @@
       const lim = halfW(y) - m;
       if (x < W / 2 - lim) x = W / 2 - lim; else if (x > W / 2 + lim) x = W / 2 + lim;
       // 漏れ防止: 真ん中の穴以外で別の場所へ移っていたら、このステップの動きを取り消す
+      // 出す側の部屋で、縦の仕切りの外側(角)に入った液は、ゆるい坂を滑るように部屋の内側へ戻す
+      // (下は左右の通り道だが、出す側の部屋からは真ん中しか通れないので、角に取り残されないように)
+      const rel = gby >= 0 ? 0 : 2, dxc = x - W / 2;
+      if (ROOM[i] === rel && Math.abs(dxc) > PLATE_HW - 3) x -= Math.sign(dxc) * 0.45;
       const r = roomOf(x, y);
       if (r !== ROOM[i]) {
         // 通ってよいのは、真ん中のノズルか、スカートの先(容器の端の近く)だけ
@@ -795,7 +799,7 @@
   }
 
   resize(); init(); applyTheme(0);
-  window.__shake = { N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme };
+  window.__shake = { N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme, setTilt(x, y) { gsx = x; gsy = y; } };
   requestAnimationFrame(loop);
 })();
 </script>
