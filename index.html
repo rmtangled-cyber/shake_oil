@@ -61,6 +61,7 @@
   const PLATE_Y = 76, PLATE_V = 20;         // 仕切り: 端の高さと斜面の深さ(たまる部屋は小さく、滴の通り道を広く)
   const HOLE = 11;                          // 中央の穴(ノズル)の半幅
   const GAP = 18;                           // 仕切りのスカートと壁の間の通り道の幅(上下とも開いている)
+  const DEPTH = 16;                         // 厚い部屋(上下)の奥行きが、少し上から見たときに見える量
   const SKIRT_END = 26;                     // スカートの先端(容器の端からこれだけ手前で止まり、通り道がつながる)
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
@@ -151,15 +152,15 @@
     N = 0;
     // 上の部屋に2色とも入れる: 青はほぼ満タン、ピンクはV字の底に(奥行きが違うので重なって見える)
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
-    // 写真の実物と同じく、重い青が下の層、ピンクが上の層
-    for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > 12; yy -= sp * 0.866, row++) {   // フタの近くまでたっぷり
+    // 写真の実物と同じく、受け皿の中で2色は左右に並ぶ(境目は少し斜め)
+    for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 10; yy -= sp * 0.866, row++) {   // 上に液面が見えるぶん、少し余白を残す
       const y = yy;
       const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
       for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
         const top = plateTop(x) - 4;
         if (yy > top || N >= MAXN) continue;
         X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
-        VX[N] = VY[N] = 0; T[N] = yy > 40 ? 0 : 1; N++;
+        VX[N] = VY[N] = 0; T[N] = x < W / 2 + (yy - 50) * 0.6 ? 0 : 1; N++;
       }
     }
     for (let i = 0; i < N; i++) ROOM[i] = roomOf(X[i], Y[i]);
@@ -230,7 +231,8 @@
   const nozY = [-1, -1];   // 色ごとの、開いているノズルの入り口(なければ -1)
   function substep() {
     for (let i = 0; i < N; i++) {
-      let g = GRAV[T[i]] * DSCALE[i];
+      // 厚い部屋の中では2色の重さは同じ(左右に並んだまま)。真ん中では色ごとに落ちる速さが少し違う
+      let g = ROOM[i] !== 1 ? 0.01 : GRAV[T[i]] * DSCALE[i];
       const nz = nozY[T[i]];
       if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 4;
       // 薄いのは真ん中の落ちる部分だけ。仕切りの上に乗った液は、ふつうの速さで端へ流れる
@@ -251,9 +253,7 @@
       const c = cellOf[i], cx = c % GW, cy = (c / GW) | 0;
       let rho = 0, rhoN = 0, n = 0, ws = 0, wx = 0, wy = 0;
       const inCup = ROOM[i] !== 1;
-      // ノズルの真上の細い柱では押し合わない: 上の層の色もノズルまで沈んでいける
-      // (出す側の部屋だけ。受け取る側の部屋ではふつうに層になる)
-      const nearNoz = Math.abs(xi - W / 2) < 22 && (gby >= 0 ? ROOM[i] === 0 : ROOM[i] === 2);
+      const nearNoz = false;
       for (let gy = cy - 1; gy <= cy + 1; gy++) {
         if (gy < 0 || gy >= GH) continue;
         for (let gx = cx - 1; gx <= cx + 1; gx++) {
@@ -387,6 +387,7 @@
     varying vec2 vUv; uniform sampler2D uF; uniform vec2 uTx; uniform vec2 uSize; uniform float uWaist;
     uniform vec3 uA0, uA1, uB0, uB1;   // 各色の 明るい色 / 濃い色
     uniform vec2 uMid;                 // 薄い真ん中の部分の上端と下端(容器の座標)
+    uniform float uDepth;              // 厚い部屋の奥行き(少し上から見たときに見える上面の高さ)
     float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*s; }
     void main(){
       vec2 w = vec2(vUv.x*uSize.x, (1.-vUv.y)*uSize.y);
@@ -396,7 +397,26 @@
       float ab = smoothstep(TH-.05, TH+.05, c.r);
       float ap = smoothstep(TH-.05, TH+.05, c.g);
       float ao = smoothstep(.42, .58, c.b);
-      if(max(max(ab, ap), ao) < .003) discard;
+      // 厚い部屋の液は奥行きのある塊: 少し上から見ているので、手前の面の上に「液の上面」が見える。
+      // 下に向かって奥行きぶん調べ、その位置の液(厚い部屋の液だけ)の上面がここに見えるかを求める
+      float topD = 0., hitK = 9., hA = 0., hB = 0.;
+      // 上下の部屋のまわりで、手前の面に隠れていない所だけ調べる(真ん中ではすぐ終わるので軽い)
+      float front0 = max(ab, ap);
+      bool zone = w.y < uMid.x + 18. || w.y > uMid.y - 18. - uDepth;
+      if (!zone && max(front0, ao) < .003) discard;
+      if (zone && front0 < .99 && max(texture2D(uF, vUv - vec2(0., uDepth * .5 / uSize.y)).r + texture2D(uF, vUv - vec2(0., uDepth * .5 / uSize.y)).g,
+                                    texture2D(uF, vUv - vec2(0., uDepth / uSize.y)).r + texture2D(uF, vUv - vec2(0., uDepth / uSize.y)).g) > .2)
+      for (int k = 1; k <= 6; k++) {
+        float sd = float(k) / 6. * uDepth, ys = w.y + sd;
+        float thick = 1. - smoothstep(uMid.x, uMid.x + 18., ys) * (1. - smoothstep(uMid.y - 18., uMid.y, ys));
+        vec4 cs = texture2D(uF, vUv - vec2(0., sd / uSize.y));
+        float d = max(cs.r, cs.g) * thick;
+        if (d > TH && hitK > 8.) { hitK = float(k); hA = cs.r; hB = cs.g; }
+        topD = max(topD, d);
+      }
+      float front = max(ab, ap);
+      float uTop = smoothstep(TH - .05, TH + .05, topD) * (1. - front);
+      if(max(max(front, ao), uTop) < .003) discard;
       vec4 tl = texture2D(uF, vUv-vec2(uTx.x,0.)), tr = texture2D(uF, vUv+vec2(uTx.x,0.));
       vec4 td = texture2D(uF, vUv-vec2(0.,uTx.y)), tu = texture2D(uF, vUv+vec2(0.,uTx.y));
       vec3 na = normalize(vec3((tl.r-tr.r)*2.4, (td.r-tu.r)*2.4, 1.));
@@ -428,7 +448,22 @@
       float bubbleRim = ao * smoothstep(.0, .5, 1.-no.z);
       float bubbleSpec = ao * pow(max(dot(no,Hh),0.), 30.);
       col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec + (sa+sb)*mix(1., .55, tm) + soft;
+      // 手前の面の上の縁: 上面との角が光を受けて明るく光る
+      float rimUp = max(la * smoothstep(.15, .55, na.y), lb * smoothstep(.15, .55, nb.y)) * (1. - tm);
+      col = mix(col, vec3(1.), rimUp * .45);
       float alpha = max(max(ab*mix(.97,.9,tm), ap*mix(.96,.88,tm)), ao*(.15 + .6*bubbleRim + bubbleSpec));
+      // 液の上面: 明るい色の平らな面。手前の縁ほど光を映して明るく、奥の縁に細い濃い線
+      if (uTop > .003) {
+        bool isA = hA >= hB;
+        vec3 lite = isA ? uA0 : uB0, deep = isA ? uA1 : uB1;
+        float f = (hitK - 1.) / 5.;                             // 0=手前の縁 1=奥の縁
+        vec3 tcol = mix(mix(lite, vec3(1.), .38), lite, f * .7);
+        tcol += pow(1. - abs(f - .25) * 2.2, 6.) * .12;       // 面に映る光のすじ
+        float backEdge = smoothstep(TH + .1, TH, topD);         // 上面の奥の縁
+        tcol = mix(tcol, deep, backEdge * .75);
+        col = mix(col, tcol, uTop);
+        alpha = max(alpha, uTop * .93);
+      }
       alpha = clamp(alpha + (sa+sb)*.5, 0., 1.);
       gl_FragColor = vec4(min(col, vec3(1.))*alpha, alpha);
     }`);
@@ -457,7 +492,7 @@
   }
 
   const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt'), mid: gl.getUniformLocation(splatP, 'uMid') };
-  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uMid']) uC[n] = gl.getUniformLocation(compP, n);
+  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uMid','uDepth']) uC[n] = gl.getUniformLocation(compP, n);
   const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
 
   function render() {
@@ -494,6 +529,7 @@
     gl.uniform3fv(uC.uA0, th.A[0]); gl.uniform3fv(uC.uA1, th.A[1]);
     gl.uniform3fv(uC.uB0, th.B[0]); gl.uniform3fv(uC.uB1, th.B[1]);
     gl.uniform2f(uC.uMid, PLATE_Y + PLATE_V, H - PLATE_Y - PLATE_V);
+    gl.uniform1f(uC.uDepth, DEPTH);
     gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
     gl.enableVertexAttribArray(aC);
     gl.vertexAttribPointer(aC, 2, gl.FLOAT, false, 0, 0);
@@ -543,12 +579,27 @@
     block(-CAP, 0, true, th.A[0]);
     block(H, H + CAP, false, th.B[0]);
     // 仕切り板
-    c.lineCap = 'round';
-    c.lineCap = 'round';
+    // 仕切り板: 奥行き方向に伸びた斜めの透明な板。少し上から見ているので、板の面が帯として見える
+    c.lineCap = 'round'; c.lineJoin = 'round';
     for (const [x1, y1, x2, y2] of SEG.slice(0, NPLATE)) {
+      if (x1 === x2) continue;   // スカート(縦の板)は面がほぼ見えない
+      c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.lineTo(x2, y2 - DEPTH); c.lineTo(x1, y1 - DEPTH); c.closePath();
+      const g = c.createLinearGradient(0, Math.min(y1, y2) - DEPTH, 0, Math.max(y1, y2));
+      g.addColorStop(0, 'rgba(255,255,255,0.08)'); g.addColorStop(1, 'rgba(255,255,255,0.28)');
+      c.fillStyle = g; c.fill();
+      c.beginPath(); c.moveTo(x1, y1 - DEPTH); c.lineTo(x2, y2 - DEPTH);
+      c.strokeStyle = 'rgba(130,110,135,0.18)'; c.lineWidth = 0.8; c.stroke();       // 奥の縁
       c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
-      c.strokeStyle = 'rgba(255,255,255,0.4)'; c.lineWidth = 3; c.stroke();     // 透明なアクリルなので、ほとんど見えない
-      c.strokeStyle = 'rgba(130,110,135,0.16)'; c.lineWidth = 0.8; c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = 2; c.stroke();         // 手前の縁
+      c.strokeStyle = 'rgba(130,110,135,0.22)'; c.lineWidth = 0.8; c.stroke();
+    }
+    // 下の部屋の底: 上から見た床の面
+    {
+      const g = c.createLinearGradient(0, H - DEPTH, 0, H);
+      g.addColorStop(0, 'rgba(255,255,255,0.05)'); g.addColorStop(1, 'rgba(255,255,255,0.3)');
+      c.fillStyle = g; c.fillRect(W / 2 - halfW(H) + 1, H - DEPTH, 2 * halfW(H) - 2, DEPTH);
+      c.beginPath(); c.moveTo(W / 2 - halfW(H - DEPTH) + 1, H - DEPTH); c.lineTo(W / 2 + halfW(H - DEPTH) - 1, H - DEPTH);
+      c.strokeStyle = 'rgba(130,110,135,0.15)'; c.lineWidth = 0.8; c.stroke();
     }
     // 側面の厚いアクリルに、中の液の色がうっすら映り込む(上は手前の色、下は奥の色)
     {
