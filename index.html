@@ -58,42 +58,60 @@
   const W = 200, H = 420;
   const WAIST = 16;                         // ゆるいくびれ
   const CAP = 46, SIDE = 11;                // 上下ブロックと側面の厚み
-  const PLATE_Y = 76, PLATE_V = 20;         // 仕切り: 端の高さと斜面の深さ(たまる部屋は小さく、滴の通り道を広く)
+  // 仕切りは上下同じ部品(ひっくり返した形): 容器とほぼ同じ幅のコップ。底はお皿のように丸くなめらかで、真ん中に穴
+  const PLATE_Y = 36;                       // コップの壁が終わって、お皿の丸い底が始まる高さ
+  const BOWL_R = 40, NECK = 16;             // お皿の丸みの深さ / 真ん中の穴に向かって細くなる首の深さ
+  const PLATE_V = BOWL_R + NECK;            // お皿のふちから真ん中の穴までの深さ
   const HOLE = 11;                          // 中央の穴(ノズル)の半幅
-  const GAP = 18;                           // 仕切りのスカートと壁の間の通り道の幅(上下とも開いている)
+  const GAP = 9;                            // コップの壁と容器の壁のすき間(滴よりずっと細い。上下とも開いている)
   const DEPTH = 10;                         // 厚い部屋(上下)の奥行きが、少し上から見たときに見える量
-  const SKIRT_END = 26;                     // スカートの先端(容器の端からこれだけ手前で止まり、通り道がつながる)
+  const SKIRT_END = 12;                     // コップの縁(容器の端のすぐ近く。縁と端の間に少しだけすき間)
   function halfW(y) {
     const s = Math.sin(Math.PI * Math.min(1, Math.max(0, y / H)));
     return W / 2 - WAIST * s * s;
   }
-  // 仕切り: 上はV字(じょうご)、下は山型。どちらも両端が「スカート」になって容器の端の方へ伸び、
-  //   スカートと壁の間が通り道になっている(上下とも開いている)。上下対称なので、ひっくり返すと役目が入れ替わる
-  //   上の部屋: 液はスカートの内側(コップの中)にたまり、真ん中のノズルからだけ出る
-  //   下の部屋: 山型に落ちた滴は両端へ滑り、スカートと壁の間を伝って下の部屋の底へ入る
-  const SEG = [];
-  const PLATE_HW = Math.min(halfW(PLATE_Y), halfW(SKIRT_END)) - GAP;   // スカートの位置
+  // 上の部屋: 液はコップの中にたまり、丸い底を伝って真ん中の穴へ集まる
+  // 下の部屋: ふせたお皿(丸い山)に落ちた滴は斜面を滑って左右の端へ行き、壁との細いすき間を伝って下り、
+  //   縁と端の間のすき間から容器のいちばん下にたまる。上下対称なので、ひっくり返すと役目が入れ替わる
+  const SEG = [], SKIND = [];   // SKIND: 0=お皿の底 1=コップの壁 2=ノズルのふた
+  const PLATE_HW = Math.min(halfW(PLATE_Y), halfW(SKIRT_END)) - GAP;   // コップの壁の位置
+  // お皿の底の深さ。u: 0=真ん中の穴 1=ふち(壁)。ふちでは縦にまるく、穴の近くは首のように細くなる
+  function bowlDepth(u) { return BOWL_R * Math.sqrt(Math.max(0, 1 - u * u)) + NECK * Math.pow(1 - u, 4); }
   {
-    const cx = W / 2, hw = PLATE_HW;
+    const cx = W / 2, hw = PLATE_HW, K = 10;
     for (const flip of [false, true]) {
       const f = y => flip ? H - y : y;
       for (const sx of [-1, 1]) {
-        SEG.push([cx + sx * hw, f(PLATE_Y), cx + sx * HOLE, f(PLATE_Y + PLATE_V)]);   // 斜面
-        SEG.push([cx + sx * hw, f(SKIRT_END), cx + sx * hw, f(PLATE_Y)]);             // スカート
+        SEG.push([cx + sx * hw, f(SKIRT_END), cx + sx * hw, f(PLATE_Y)]); SKIND.push(1);   // コップの壁
+        let px = cx + sx * hw, py = f(PLATE_Y);
+        for (let k = 1; k <= K; k++) {                                                    // 丸い底(両端ほど細かく区切る)
+          const u = 0.5 + 0.5 * Math.cos(Math.PI * k / K);
+          const nx = cx + sx * (HOLE + u * (hw - HOLE)), ny = f(PLATE_Y + bowlDepth(u));
+          SEG.push([px, py, nx, ny]); SKIND.push(0); px = nx; py = ny;
+        }
       }
     }
   }
   // ノズルのふた(色ごとに通す/通さないを切り替える見えない板)
   //   上側の仕切りのノズル: 青とピンクを交互に1滴ずつ出す / 下側のノズル: いつでも通る
-  SEG.push([W / 2 - HOLE - 1, PLATE_Y + PLATE_V, W / 2 + HOLE + 1, PLATE_Y + PLATE_V]);          // 0: 容器の上側の仕切りのノズル
-  SEG.push([W / 2 - HOLE - 1, H - PLATE_Y - PLATE_V, W / 2 + HOLE + 1, H - PLATE_Y - PLATE_V]);  // 1: 容器の下側の仕切りのノズル
-  const NPLATE = 8, NS = SEG.length;
+  const NPLATE = SEG.length;
+  SEG.push([W / 2 - HOLE - 1, PLATE_Y + PLATE_V, W / 2 + HOLE + 1, PLATE_Y + PLATE_V]); SKIND.push(2);          // 0: 容器の上側の仕切りのノズル
+  SEG.push([W / 2 - HOLE - 1, H - PLATE_Y - PLATE_V, W / 2 + HOLE + 1, H - PLATE_Y - PLATE_V]); SKIND.push(2);  // 1: 容器の下側の仕切りのノズル
+  const NS = SEG.length;
   const lidMask = new Uint8Array(2);   // ビット0=Aを止める ビット1=Bを止める
   const crossOK = [false, false];      // 色ごと: ノズルの上と下の液がつながってよいか(ぶら下がる滴をつくる間だけ)
   const DRIP_PERIOD = 2.4, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)
   const SX = new Float32Array(NS), SY = new Float32Array(NS), SDX = new Float32Array(NS), SDY = new Float32Array(NS),
         SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
+  // 当たり判定の範囲(遠い板は調べない)と、板の厚み(底は液の見た目がはみ出さないよう少し厚め、壁は細いすき間を通れるよう薄め)
+  const SBX0 = new Float32Array(NS), SBX1 = new Float32Array(NS), SBY0 = new Float32Array(NS), SBY1 = new Float32Array(NS);
+  const SMG = new Float32Array(NS);
   SEG.forEach(([x1, y1, x2, y2], i) => {
+    // 底のふち近く(細いすき間の入口)は薄めにして、滴がすき間へ入れるようにする
+    const nearEdge = Math.max(Math.abs(x1 - W / 2), Math.abs(x2 - W / 2)) > PLATE_HW - 10;
+    SMG[i] = SKIND[i] === 0 ? (nearEdge ? 1.2 : 5) : SKIND[i] === 1 ? 1.2 : 2;
+    const e = SMG[i] + 12;
+    SBX0[i] = Math.min(x1, x2) - e; SBX1[i] = Math.max(x1, x2) + e; SBY0[i] = Math.min(y1, y2) - e; SBY1[i] = Math.max(y1, y2) + e;
     SX[i] = x1; SY[i] = y1; SDX[i] = x2 - x1; SDY[i] = y2 - y1;
     SL2[i] = SDX[i] * SDX[i] + SDY[i] * SDY[i];
     const l = Math.sqrt(SL2[i]); SNX[i] = -SDY[i] / l; SNY[i] = SDX[i] / l;
@@ -135,9 +153,10 @@
   const GW = Math.ceil(W / R) + 1, GH = Math.ceil(H / R) + 1;
   const cellStart = new Int32Array(GW * GH + 1), cellOf = new Int32Array(MAXN), sorted = new Int32Array(MAXN);
 
-  function plateTop(x) {            // 上の仕切りの板の高さ(下の仕切りは H - plateTop)
-    const d = Math.min(Math.abs(x - W / 2), PLATE_HW), hw = PLATE_HW;
-    return d < HOLE ? PLATE_Y + PLATE_V : PLATE_Y + PLATE_V * (hw - d) / (hw - HOLE);
+  function plateTop(x) {            // 上の仕切り(お皿の底)の高さ(下の仕切りは H - plateTop)
+    const d = Math.abs(x - W / 2);
+    if (d <= HOLE) return PLATE_Y + PLATE_V;
+    return PLATE_Y + bowlDepth(Math.min(1, (d - HOLE) / (PLATE_HW - HOLE)));
   }
   // いる場所: 0=上のコップの中 1=真ん中(スカートの外の通り道もここ) 2=下のコップの中
   function roomOf(x, y) {
@@ -154,13 +173,13 @@
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
     // 青とピンクは表と裏の別の層にあるので、同じ場所に重ねて入れる
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > DEPTH + 2; yy -= sp * 0.866, row++) {   // 縦の仕切りの上の端より上までたっぷり(溢れないのは界面張力のおかげ)
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > SKIRT_END + 5; yy -= sp * 0.866, row++) {   // コップの縁のすぐ下までたっぷり(縁の外にははみ出さない)
         const y = yy;
-        const lim = yy < SKIRT_END ? halfW(yy) - 4 : PLATE_HW - 8;   // スカートの先より上は容器いっぱい
+        const lim = PLATE_HW - 6;   // コップの中だけ
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
           const top = plateTop(x) - 4;
           if (yy > top || N >= MAXN) continue;
-          if (t === 1 && top - yy > (top - DEPTH - 2) * 0.45) continue;   // ピンクはV字の底側
+          if (t === 1 && top - yy > (top - SKIRT_END - 5) * 0.45) continue;   // ピンクはV字の底側
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
           VX[N] = VY[N] = 0; T[N] = t; N++;
         }
@@ -202,6 +221,11 @@
     if (Math.abs(x - W / 2) < PLATE_HW) return false;
     return (y > SKIRT_END && y < PLATE_Y) || (y > H - PLATE_Y && y < H - SKIRT_END);
   }
+  // すき間の中と、その出口のすぐ外(出口にぶら下がって止まらないように)
+  function inChanZone(x, y) {
+    if (Math.abs(x - W / 2) < PLATE_HW) return false;
+    return (y > SKIRT_END - 2 && y < PLATE_Y + 6) || (y > H - PLATE_Y - 6 && y < H - SKIRT_END + 2);
+  }
   // すき間に入れるか: 入口の上(重力と反対向き)に積み重なっている同じ色の液の量(=押す力)で決める。
   // 強く振ったときは、その勢いで膜を破って入れる
   const GAP_STRONG = 34, GAP_WEAK = 2, SHAKE_BREAK = 0.04;
@@ -220,15 +244,15 @@
   const nbJ = new Int32Array(256), nbQ = new Float32Array(256);
   const R2 = R * R;
 
-  const PM = 7;   // 仕切りの厚み(液体の見た目がはみ出さないよう少し厚め)
   // 仕切りやふたに押し戻された粒は、押し戻された向きの速さを消す(はじき飛ばされないように)
   const HIT = new Uint8Array(MAXN), HNX = new Float32Array(MAXN), HNY = new Float32Array(MAXN);
   function collidePlates(i) {
     HIT[i] = 0;
     for (let s = 0; s < NS; s++) {
       if (s >= NPLATE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
-      const m = s >= NPLATE && s < NPLATE + 2 ? 2 : PM;   // ノズルのふたは薄く(閉じたとき粒が大きくずれない)。すき間のふたは板と同じ厚みで段差をなくす
       const x = X[i], y = Y[i];
+      if (x < SBX0[s] || x > SBX1[s] || y < SBY0[s] || y > SBY1[s]) continue;
+      const m = SMG[s];
       const s0 = (PX[i] - SX[s]) * SNX[s] + (PY[i] - SY[s]) * SNY[s];
       const s1 = (x - SX[s]) * SNX[s] + (y - SY[s]) * SNY[s];
       let t = ((x - SX[s]) * SDX[s] + (y - SY[s]) * SDY[s]) / SL2[s];
@@ -259,6 +283,7 @@
       let g = GRAV[T[i]] * DSCALE[i];
       const nz = nozY[T[i]];
       if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 4;
+      if (inChanZone(X[i], Y[i])) g *= 3;   // 細いすき間に入った液は、細い流れになってすっと下りていく
       // 薄いのは真ん中の落ちる部分だけ。仕切りの上に乗った液は、ふつうの速さで端へ流れる
       const yy = gby >= 0 ? Y[i] : H - Y[i];
       const thin = yy > PLATE_Y + PLATE_V && yy < H - PLATE_Y - PLATE_V - 40;
@@ -301,6 +326,8 @@
       // 厚い部屋の中は引っぱり合い(表面張力)を弱めて、液面が平らに広がるようにする
       let pr = K * (rho - rho0);
       if (inCup && pr < 0) pr *= 0.4;
+      const chanI = inChanZone(xi, yi);
+      if (chanI && pr < 0) pr = 0;   // 細いすき間の中の流れは、上の液のかたまりに引き戻されない
       const prN = KN * rhoN;
       let sx = 0, sy = 0;
       for (let m = 0; m < n; m++) {
@@ -314,7 +341,7 @@
       }
       X[i] += sx; Y[i] += sy;
       // 周りの同じ色の重心へ少し寄せる: 表面が縮み、細い流れはくびれて滴に分かれる
-      const st = inCup ? ST * 0.15 : ST;
+      const st = chanI ? 0 : inCup ? ST * 0.15 : ST;
       if (ws > 0) { X[i] += st * (wx / ws - xi); Y[i] += st * (wy / ws - yi); }
     }
     const m = 2.5;
@@ -322,7 +349,7 @@
       collidePlates(i);
       let x = X[i], y = Y[i];
       if (y < m) y = m; else if (y > H - m) y = H - m;
-      const lim = halfW(y) - m;
+      const lim = halfW(y) - (Math.abs(x - W / 2) > PLATE_HW ? 1.2 : m);   // 細いすき間の中は壁ぎりぎりまで通れる
       if (x < W / 2 - lim) x = W / 2 - lim; else if (x > W / 2 + lim) x = W / 2 + lim;
       // すり抜け防止: 仕切りの板そのものを通り抜けて別の場所へ移っていたら、このステップの動きを取り消す
       // (穴やすき間を通るのは自由。通りやすさは仕切りの形と重さで自然に決まる)
@@ -332,7 +359,15 @@
       //   真ん中の側からの入口(山型の坂を滑り下りた先): 弱く押し返す
       if (inChan(x, y) && !inChan(PX[i], PY[i])) {
         const fromEnd = PY[i] < SKIRT_END + 4 || PY[i] > H - SKIRT_END - 4;
-        if (!canEnterGap(i, fromEnd ? GAP_STRONG : GAP_WEAK)) { x = PX[i]; y = PY[i]; }
+        if (!canEnterGap(i, fromEnd ? GAP_STRONG : GAP_WEAK)) {
+          // 膜に押し返される: すき間へ入ろうとした向きの動きだけ止める(横へは動ける)
+          if (inChan(PX[i], y)) y = PY[i];
+          if (inChan(x, y)) x = PX[i];
+          // 入口は滴よりずっと細いので、入口の上には乗れない。すぐ隣の広いコップの中へ転がり落ちる
+          // (上側の端からすき間へ落ちようとしたときだけ。下側でたまった液が押し上げられたときは何もしない)
+          const fromUpperEnd = gby >= 0 ? PY[i] < SKIRT_END + 4 : PY[i] > H - SKIRT_END - 4;
+          if (fromUpperEnd) { x -= Math.sign(x - W / 2) * 1.0; y -= gby * 0.8; }   // 縁の上を越えて内側へ
+        }
       }
       const r = roomOf(x, y);
       if (r !== ROOM[i]) {
@@ -604,8 +639,14 @@
     // 仕切り板
     // 仕切り板: 奥行き方向に伸びた斜めの透明な板。少し上から見ているので、板の面が帯として見える
     c.lineCap = 'round'; c.lineJoin = 'round';
-    for (const [x1, y1, x2, y2] of SEG.slice(0, NPLATE)) {
-      if (x1 === x2) continue;   // スカート(縦の板)は面がほぼ見えない
+    for (let k = 0; k < NPLATE; k++) {
+      const [x1, y1, x2, y2] = SEG[k];
+      if (SKIND[k] === 1) {   // コップの壁: 面はほぼ見えないので細い線だけ
+        c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
+        c.strokeStyle = 'rgba(255,255,255,0.7)'; c.lineWidth = 1.6; c.stroke();
+        c.strokeStyle = 'rgba(130,110,135,0.2)'; c.lineWidth = 0.7; c.stroke();
+        continue;
+      }
       c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.lineTo(x2, y2 - DEPTH); c.lineTo(x1, y1 - DEPTH); c.closePath();
       const g = c.createLinearGradient(0, Math.min(y1, y2) - DEPTH, 0, Math.max(y1, y2));
       g.addColorStop(0, 'rgba(255,255,255,0.08)'); g.addColorStop(1, 'rgba(255,255,255,0.28)');
