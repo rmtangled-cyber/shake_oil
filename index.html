@@ -21,14 +21,34 @@
   #bottle canvas { position:absolute; display:block; }
   #shadow { position:absolute; left:0; top:0; border-radius:50%;
     background:radial-gradient(closest-side, #0000002a, transparent); pointer-events:none; will-change:transform; }
-  #hud { position:fixed; top:calc(12px + env(safe-area-inset-top)); left:0; right:0; text-align:center; pointer-events:none; }
-  #hud h1 { margin:0; font-size:14px; font-weight:500; letter-spacing:.25em; color:var(--sub); }
-  #btns { position:fixed; left:0; right:0; bottom:calc(16px + env(safe-area-inset-bottom));
-    display:flex; justify-content:center; gap:10px; padding:0 16px; flex-wrap:wrap; }
-  button { font:inherit; font-size:14px; padding:10px 16px; border-radius:999px; border:1px solid #ffffff;
-    background:var(--panel); color:var(--fg); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  button { font:inherit; font-size:15px; color:var(--fg); cursor:pointer; }
   button:focus-visible { outline:2px solid var(--sub); outline-offset:2px; }
-  #sensor { display:none; align-items:center; gap:10px; }
+  /* 左上の三本線 */
+  #menuBtn { position:fixed; z-index:20; top:calc(10px + env(safe-area-inset-top)); left:calc(10px + env(safe-area-inset-left));
+    width:44px; height:44px; padding:0; border:0; border-radius:12px; background:transparent;
+    display:flex; flex-direction:column; justify-content:center; align-items:center; gap:5px; }
+  #menuBtn span { display:block; width:20px; height:2px; border-radius:1px; background:var(--sub); opacity:.75;
+    transition:transform .25s, opacity .25s; }
+  #menuBtn[aria-expanded="true"] span:nth-child(1) { transform:translateY(7px) rotate(45deg); }
+  #menuBtn[aria-expanded="true"] span:nth-child(2) { opacity:0; }
+  #menuBtn[aria-expanded="true"] span:nth-child(3) { transform:translateY(-7px) rotate(-45deg); }
+  /* メニュー(左から出てくる) */
+  #scrim { position:fixed; inset:0; z-index:10; background:#0000; transition:background .25s; }
+  #scrim.open { background:#00000014; }
+  #menu { position:fixed; z-index:15; top:0; bottom:0; left:0; width:min(280px, 82vw);
+    padding:calc(64px + env(safe-area-inset-top)) 18px calc(20px + env(safe-area-inset-bottom)) max(18px, calc(env(safe-area-inset-left) + 12px));
+    background:#ffffffc4; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-radius:0 20px 20px 0; box-shadow:4px 0 24px #0000000f;
+    display:flex; flex-direction:column; gap:22px; transform:translateX(-105%); transition:transform .28s ease; }
+  #menu.open { transform:none; }
+  .msec { display:flex; flex-direction:column; gap:10px; }
+  .mlbl { font-size:12px; letter-spacing:.12em; color:var(--sub); }
+  .seasons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .seasons button, #flip { padding:10px 12px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; text-align:left; }
+  .seasons button[aria-checked="true"] { border-color:var(--sub); background:#fff; }
+  #sensor { display:none; align-items:center; justify-content:space-between; gap:10px; width:100%;
+    padding:10px 12px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; }
+  @media (prefers-reduced-motion: reduce) { #menu, #scrim, #menuBtn span { transition:none; } }
   #sensor .track { width:38px; height:22px; border-radius:11px; background:#d9d0d6; position:relative; transition:background .2s; flex:none; }
   #sensor .knob { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff;
     box-shadow:0 1px 3px #0003; transition:transform .2s; }
@@ -42,12 +62,18 @@
   <div id="shadow"></div>
   <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
 </div>
-<div id="hud"><h1>シェイク・オイル</h1></div>
-<div id="btns">
-  <button id="color">季節: 春 🌸</button>
-  <button id="flip">ひっくり返す</button>
-  <button id="sensor" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
-</div>
+<button id="menuBtn" aria-label="メニュー" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+<div id="scrim" hidden></div>
+<nav id="menu" aria-label="メニュー" inert>
+  <div class="msec">
+    <div class="mlbl">季節</div>
+    <div class="seasons" id="seasons" role="radiogroup" aria-label="季節"></div>
+  </div>
+  <div class="msec">
+    <button id="flip">ひっくり返す</button>
+    <button id="sensor" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
+  </div>
+</nav>
 <div id="fps"></div>
 <script>
 (() => {
@@ -780,8 +806,8 @@
   function resize() {
     vw = innerWidth; vh = innerHeight;
     dpr = Math.min(2, window.devicePixelRatio || 1);
-    scale = Math.min((vh - 150) / OH, (vw * 0.7) / OW);
-    homeX = (vw - OW * scale) / 2; homeY = 44 + (vh - 150 - OH * scale) / 2 + 12;
+    scale = Math.min((vh - 90) / OH, (vw * 0.74) / OW);
+    homeX = (vw - OW * scale) / 2; homeY = (vh - OH * scale) / 2 - 6;
     if (!dragging) { bx = tx = homeX; by = ty = homeY; }
     bottleEl.style.width = OW * scale + 'px'; bottleEl.style.height = OH * scale + 'px';
     bottleEl.style.transformOrigin = `${OW * scale / 2}px ${OH * scale / 2}px`;
@@ -809,20 +835,39 @@
 
   function flip() { angT += Math.PI; }
   document.getElementById('flip').addEventListener('click', flip);
-  const colorBtn = document.getElementById('color');
+  // 季節(メニューの中から選ぶ)
+  const seasonsEl = document.getElementById('seasons');
+  const seasonBtns = THEMES.map((th, k) => {
+    const bt = document.createElement('button');
+    bt.setAttribute('role', 'radio'); bt.textContent = th.name;
+    bt.addEventListener('click', () => applyTheme(k));
+    seasonsEl.appendChild(bt); return bt;
+  });
   function applyTheme(i) {
     theme = i;
     const [b1, b2, g1, g2] = THEMES[theme].css, st = document.documentElement.style;
     st.setProperty('--bg1', b1); st.setProperty('--bg2', b2); st.setProperty('--glow1', g1); st.setProperty('--glow2', g2);
-    colorBtn.textContent = '季節: ' + THEMES[theme].name;
+    seasonBtns.forEach((bt, k) => bt.setAttribute('aria-checked', k === theme ? 'true' : 'false'));
     drawGlass(scale, dpr);
   }
-  colorBtn.addEventListener('click', () => applyTheme((theme + 1) % THEMES.length));
+
+  // 左上の三本線で開け閉めするメニュー
+  const menuBtn = document.getElementById('menuBtn'), menuEl = document.getElementById('menu'), scrim = document.getElementById('scrim');
+  function setMenu(open) {
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    menuEl.classList.toggle('open', open); menuEl.inert = !open;
+    if (open) { scrim.hidden = false; requestAnimationFrame(() => scrim.classList.add('open')); }
+    else { scrim.classList.remove('open'); setTimeout(() => { if (!menuEl.classList.contains('open')) scrim.hidden = true; }, 280); }
+  }
+  menuBtn.addEventListener('click', () => setMenu(menuBtn.getAttribute('aria-expanded') !== 'true'));
+  scrim.addEventListener('pointerdown', () => setMenu(false));
+  addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
+  document.getElementById('flip').addEventListener('click', () => setMenu(false));   // ひっくり返すところが見えるように閉じる
 
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensor');
   let sax = 0, say = 0, gsx = 0, gsy = 1, sensorOn = false;
-  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'inline-flex';
+  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'flex';
   function onMotion(e) {
     const a = e.acceleration, g = e.accelerationIncludingGravity;
     if (a && a.x != null) { sax = a.x; say = -a.y; }
