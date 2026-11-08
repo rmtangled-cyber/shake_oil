@@ -75,7 +75,7 @@
   .mlbl { font-size:11px; letter-spacing:.14em; color:var(--sub); padding:2px 4px 0; }
   .mitem[aria-checked="true"] { border-color:var(--sub); background:#fff; }
   .mitem .tm { font-size:12px; color:var(--sub); }
-  [data-mode="edit"] { cursor:default; color:var(--sub); }
+  [data-mode][aria-disabled="true"] { cursor:default; color:var(--sub); }
   /* タイマーモードの時間ボタン(右下) */
   #timeBtns { display:flex; flex-direction:column; gap:12px; }
   #timeBtns[hidden] { display:none; }
@@ -118,6 +118,8 @@
     <button class="mitem" role="radio" data-mode="timer" aria-checked="false"><span>タイマーモード</span></button>
   </div>
   <button class="mitem" data-mode="edit" aria-disabled="true"><span>編集モード</span><span class="soon">準備中</span></button>
+  <button class="mitem" data-mode="maze" aria-disabled="true"><span>迷路モード</span><span class="soon">準備中</span></button>
+  <button class="mitem" data-mode="shake" aria-disabled="true"><span>シェイクモード</span><span class="soon">準備中</span></button>
 </nav>
 <div id="fps"></div>
 <div id="topProbe" style="position:fixed;left:0;top:0;width:0;height:var(--top-safe);visibility:hidden;pointer-events:none"></div>
@@ -1175,7 +1177,7 @@
   function setMode(m) {
     unlockAudio();
     mode = m;
-    modeBtns.forEach(b => b.setAttribute('aria-checked', b.dataset.mode === m ? 'true' : 'false'));
+    modeBtns.forEach(b => { if (b.getAttribute('role') === 'radio') b.setAttribute('aria-checked', b.dataset.mode === m ? 'true' : 'false'); });
     shapeBtns.forEach((b, k) => b.setAttribute('aria-checked', m === 'timer' && k === shapeIdx ? 'true' : 'false'));
     // タイマーモード: 右下は時間ボタンだけ(∞・センサー・回転は出さない)
     const tm = m === 'timer';
@@ -1188,7 +1190,7 @@
     restart();
   }
   modeBtns.forEach(b => b.addEventListener('click', () => {
-    if (b.dataset.mode === 'edit') return;   // 編集モード(中身はあとで作る)
+    if (b.getAttribute('aria-disabled') === 'true') return;   // 編集・迷路・シェイクモード(中身はあとで作る)
     setMode(b.dataset.mode); setMenu(false);
   }));
   // 最初から(いまの向きで、上の部屋にたっぷり入れ直す)
