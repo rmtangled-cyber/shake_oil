@@ -286,7 +286,8 @@
       if (inChanZone(X[i], Y[i])) g *= 3;   // 細いすき間に入った液は、細い流れになってすっと下りていく
       // 薄いのは真ん中の落ちる部分だけ。仕切りの上に乗った液は、ふつうの速さで端へ流れる
       const yy = gby >= 0 ? Y[i] : H - Y[i];
-      const thin = yy > PLATE_Y + PLATE_V && yy < H - PLATE_Y - PLATE_V - 40;
+      // 薄い所(コップの外側)では壁にはさまれてゆっくり。受け皿の山の上の液は、ふつうの速さで端へ流れる
+      const thin = ROOM[i] === 1 && yy < H - PLATE_Y - PLATE_V - 40;
       const dr = thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
       // 薄いすき間の中では、ゆるやかな流れで滴の列が左右にゆらぐ(色ごとに奥行きが違うので流れも少し違う)
       let wx = 0;
@@ -424,10 +425,25 @@
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
 
   const splatP = prog(`
-    attribute vec3 a; uniform vec2 uSize; uniform float uPt; uniform vec2 uMid; varying float vT; varying float vTm;
+    attribute vec3 a; uniform vec2 uSize; uniform float uPt; varying float vT; varying float vTm;
+    // 薄い所かどうか(1=薄い 0=厚い)。厚いのは上下のコップの内側と、容器の端のあたりだけ。コップの外側はすべて薄い
+    uniform vec4 uPlate;    // コップの壁が終わる高さ, お皿の丸みの深さ, 首の深さ, 穴の半幅
+    uniform vec2 uPlate2;   // コップの壁の位置(真ん中から), 縁の高さ
+    float plateTopAt(float d){
+      if (d <= uPlate.w) return uPlate.x + uPlate.y + uPlate.z;
+      float u = min(1., (d - uPlate.w) / (uPlate2.x - uPlate.w));
+      return uPlate.x + uPlate.y * sqrt(max(0., 1. - u*u)) + uPlate.z * pow(1. - u, 4.);
+    }
+    float thinAt(vec2 p){
+      float d = abs(p.x - uSize.x*.5);
+      float endT = smoothstep(uPlate2.y - 2., uPlate2.y + 6., p.y) * (1. - smoothstep(uSize.y - uPlate2.y - 6., uSize.y - uPlate2.y + 2., p.y));
+      if (d >= uPlate2.x) return endT;
+      float pt = plateTopAt(d);
+      return smoothstep(pt - 2., pt + 6., p.y) * (1. - smoothstep(uSize.y - pt - 6., uSize.y - pt + 2., p.y));
+    }
     void main(){ vT = a.z; gl_Position = vec4(a.x/uSize.x*2.-1., 1.-a.y/uSize.y*2., 0., 1.);
-      // 真ん中の薄いすき間では、滴が前後の壁に押されて平たく広がり、正面からは大きな丸に見える
-      float tm = vT < 1.5 ? smoothstep(uMid.x, uMid.x + 18., a.y) * (1. - smoothstep(uMid.y - 18., uMid.y, a.y)) : 0.;
+      // 薄い所では、滴が前後の壁に押されて平たく広がり、正面からは大きな丸に見える
+      float tm = vT < 1.5 ? thinAt(a.xy) : 0.;
       vTm = tm;
       gl_PointSize = uPt * (1. + .3 * tm); }`,
   `precision mediump float; varying float vT; varying float vTm;
@@ -443,8 +459,10 @@
   `precision mediump float;
     varying vec2 vUv; uniform sampler2D uF; uniform vec2 uTx; uniform vec2 uSize; uniform float uWaist;
     uniform vec3 uA0, uA1, uB0, uB1;   // 各色の 明るい色 / 濃い色
-    uniform vec2 uMid;                 // 薄い真ん中の部分の上端と下端(容器の座標)
+    // 薄い所かどうか(1=薄い 0=厚い)。形は変わらないので、前もって作った画像から読む(軽くするため)
+    uniform sampler2D uThin;
     uniform float uDepth;              // 厚い部屋の奥行き(少し上から見たときに見える上面の高さ)
+    float thinAt(vec2 p){ return texture2D(uThin, vec2(p.x / uSize.x, 1. - p.y / uSize.y)).r; }
     float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*s; }
     void main(){
       vec2 w = vec2(vUv.x*uSize.x, (1.-vUv.y)*uSize.y);
@@ -459,13 +477,13 @@
       float topD = 0., hitK = 9., mA = 0., mB = 0.;
       // 上下の部屋のまわりで、手前の面に隠れていない所だけ調べる(真ん中ではすぐ終わるので軽い)
       float front0 = max(ab, ap);
-      bool zone = w.y < uMid.x + 18. || w.y > uMid.y - 18. - uDepth;
+      bool zone = thinAt(w) < .99 || thinAt(w + vec2(0., uDepth)) < .99;
       if (!zone && max(front0, ao) < .003) discard;
       if (zone && front0 < .99 && max(texture2D(uF, vUv - vec2(0., uDepth * .5 / uSize.y)).r + texture2D(uF, vUv - vec2(0., uDepth * .5 / uSize.y)).g,
                                     texture2D(uF, vUv - vec2(0., uDepth / uSize.y)).r + texture2D(uF, vUv - vec2(0., uDepth / uSize.y)).g) > .2)
       for (int k = 1; k <= 6; k++) {
         float sd = float(k) / 6. * uDepth, ys = w.y + sd;
-        float thick = 1. - smoothstep(uMid.x, uMid.x + 18., ys) * (1. - smoothstep(uMid.y - 18., uMid.y, ys));
+        float thick = 1. - thinAt(vec2(w.x, ys));
         vec4 cs = texture2D(uF, vUv - vec2(0., sd / uSize.y));
         float d = max(cs.r, cs.g) * thick;
         if (d > TH && hitK > 8.) hitK = float(k);
@@ -484,7 +502,7 @@
       float la = ab * (1. - smoothstep(TH+.03, TH+.14, c.r));
       float lb = ap * (1. - smoothstep(TH+.03, TH+.14, c.g));
       // 真ん中(薄いすき間)かどうか
-      float tm = smoothstep(uMid.x, uMid.x + 18., w.y) * (1. - smoothstep(uMid.y - 18., uMid.y, w.y));
+      float tm = thinAt(w);
       // 厚い部屋: 液が厚いぶん深く濃い色。縁ほどさらに濃く、中は光が通って少し明るい(立体感)
       float da = smoothstep(TH, .98, c.r), db = smoothstep(TH, .98, c.g);
       // 上を向いた縁(上面へつながる所)は暗くしない: 手前の面と上面がつなぎ目なくなじむ
@@ -533,6 +551,27 @@
   gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
   gl.bufferData(gl.ARRAY_BUFFER, pData.byteLength, gl.DYNAMIC_DRAW);
 
+  // 薄い所の地図(1=薄い 0=厚い)。厚いのは上下のコップの内側と、容器の端のあたりだけ
+  const thinTex = gl.createTexture();
+  {
+    const TW = 100, TH = 210, buf = new Uint8Array(TW * TH);
+    const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    for (let r = 0; r < TH; r++) for (let q = 0; q < TW; q++) {
+      const x = (q + .5) / TW * W, y = H - (r + .5) / TH * H, d = Math.abs(x - W / 2);
+      const endT = ss(SKIRT_END - 2, SKIRT_END + 6, y) * (1 - ss(H - SKIRT_END - 6, H - SKIRT_END + 2, y));
+      let v;
+      if (d >= PLATE_HW) v = endT;
+      else { const pt = plateTop(x); v = ss(pt - 2, pt + 6, y) * (1 - ss(H - pt - 6, H - pt + 2, y)); }
+      buf[r * TW + q] = Math.round(v * 255);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, thinTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, TW, TH, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, buf);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
   let fTex = null, fFbo = null, fW = 1, fH = 1;
   function makeField(w, h) {
     if (fTex) { gl.deleteTexture(fTex); gl.deleteFramebuffer(fFbo); }
@@ -549,8 +588,9 @@
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fTex, 0);
   }
 
-  const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt'), mid: gl.getUniformLocation(splatP, 'uMid') };
-  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uMid','uDepth']) uC[n] = gl.getUniformLocation(compP, n);
+  const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt'),
+                plate: gl.getUniformLocation(splatP, 'uPlate'), plate2: gl.getUniformLocation(splatP, 'uPlate2') };
+  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uDepth','uThin']) uC[n] = gl.getUniformLocation(compP, n);
   const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
 
   function render() {
@@ -562,7 +602,7 @@
     gl.useProgram(splatP);
     gl.uniform2f(uS.size, W, H);
     gl.uniform1f(uS.pt, R * 2.0 * fW / W);
-    gl.uniform2f(uS.mid, PLATE_Y + PLATE_V, H - PLATE_Y - PLATE_V);
+    gl.uniform4f(uS.plate, PLATE_Y, BOWL_R, NECK, HOLE); gl.uniform2f(uS.plate2, PLATE_HW, SKIRT_END);
     gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, pData.subarray(0, N * 3));
     gl.enableVertexAttribArray(aS);
@@ -586,7 +626,7 @@
     const th = THEMES[theme];
     gl.uniform3fv(uC.uA0, th.A[0]); gl.uniform3fv(uC.uA1, th.A[1]);
     gl.uniform3fv(uC.uB0, th.B[0]); gl.uniform3fv(uC.uB1, th.B[1]);
-    gl.uniform2f(uC.uMid, PLATE_Y + PLATE_V, H - PLATE_Y - PLATE_V);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, thinTex); gl.uniform1i(uC.uThin, 1); gl.activeTexture(gl.TEXTURE0);
     gl.uniform1f(uC.uDepth, DEPTH);
     gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
     gl.enableVertexAttribArray(aC);
@@ -677,14 +717,9 @@
         c.strokeStyle = g; c.lineWidth = SIDE * 0.7; c.stroke();
       }
     }
-    // 真ん中は薄いパネル: 厚い部屋から薄くなる段差にハイライト、壁ぎわに薄い内側の縁
+    // コップの外側は薄いパネル: 壁ぎわに薄い内側の縁
     {
-      const y0 = PLATE_Y + PLATE_V, y1 = H - PLATE_Y - PLATE_V;
-      for (const [yy, d] of [[y0, 1], [y1, -1]]) {
-        const g = c.createLinearGradient(0, yy, 0, yy + d * 14);
-        g.addColorStop(0, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-        c.fillStyle = g; c.fillRect(W / 2 - halfW(yy) + 3, Math.min(yy, yy + d * 14), 2 * halfW(yy) - 6, 14);
-      }
+      const y0 = PLATE_Y, y1 = H - PLATE_Y;
       c.beginPath();
       for (const side of [-1, 1]) {
         for (let k = 0; k <= 24; k++) { const y = y0 + 10 + (y1 - y0 - 20) * k / 24, x = W / 2 + side * (halfW(y) - 6);
