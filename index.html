@@ -41,6 +41,10 @@
   #menuBtn[aria-expanded="true"] span:nth-child(2) { opacity:0; }
   #menuBtn[aria-expanded="true"] span:nth-child(3) { transform:translateY(-7px) rotate(-45deg); }
   #rotateBtn { right:calc(14px + env(safe-area-inset-right)); bottom:calc(14px + env(safe-area-inset-bottom)); }
+  #infBtn { right:calc(14px + env(safe-area-inset-right)); bottom:calc(72px + env(safe-area-inset-bottom)); }
+  #infBtn svg { width:26px; height:26px; stroke:var(--sub); fill:none; stroke-width:1.8; stroke-linecap:round; }
+  #infBtn[aria-pressed="true"] { background:#ffffffe6; border-color:var(--sub); box-shadow:0 0 0 2px #ffffff99, 0 2px 10px #00000014; }
+  #infBtn[aria-pressed="true"] svg { stroke:var(--fg); }
   #rotateBtn svg { width:24px; height:24px; stroke:var(--sub); fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;
     transition:transform .5s ease; }
   /* ブラウザで開くと、画面のいちばん上(時計などの帯)の下にページが入りこむことがあり、
@@ -84,6 +88,9 @@
   <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
 </div>
 <div id="seasons" role="radiogroup" aria-label="季節"></div>
+<button id="infBtn" class="fab" aria-label="ずっと落ち続ける" aria-pressed="false">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c-2-2.6-3.6-4-5.5-4a4 4 0 0 0 0 8c1.9 0 3.5-1.4 5.5-4s3.6-4 5.5-4a4 4 0 0 1 0 8c-1.9 0-3.5-1.4-5.5-4z"/></svg>
+</button>
 <button id="rotateBtn" class="fab" aria-label="上下を入れ替える">
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9"/><path d="M5.5 2.8v3.6h3.6"/><path d="M4 13a8 8 0 0 0 14.3 4.9"/><path d="M18.5 21.2v-3.6h-3.6"/></svg>
 </button>
@@ -223,23 +230,64 @@
     const p = plateTop(x);
     return y < p ? 0 : y > H - p ? 2 : 1;
   }
+  function recycle() {
+    if (Math.abs(gby) < 0.3) return;
+    const recv = gby > 0 ? 2 : 0, rel = 2 - recv;
+    for (const t of [0, 1]) {
+      // 下に届いた量 = 下の部屋 + 下の仕切りの上やすき間にいる液(真ん中を落ちている途中の滴は数えない)
+      const landed = i => ROOM[i] === recv || (ROOM[i] === 1 && (gby > 0 ? Y[i] > H - PLATE_Y - PLATE_V - 12 : Y[i] < PLATE_Y + PLATE_V + 12));
+      let c = 0; for (let i = 0; i < N; i++) if (T[i] === t && landed(i)) c++;
+      for (; c > infTarget[t]; c--) {
+        // 下の部屋のいちばん底(液のかたまりの中で見えない所)の粒を、上の部屋の液の中へ戻す
+        let deep = -1, dv = -1e9;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === recv) { const v = Y[i] * gby; if (v > dv) { dv = v; deep = i; } }
+        let k = 0, pick = -1;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel && Math.random() * ++k < 1) pick = i;
+        if (deep < 0 || pick < 0) break;
+        X[deep] = PX[deep] = X[pick] + (Math.random() - .5) * 2; Y[deep] = PY[deep] = Y[pick] - gby * (Math.random() * 2);
+        VX[deep] = VY[deep] = 0; ROOM[deep] = rel;
+      }
+    }
+  }
+  // ずっと落ち続けるモード: 上と下に半分ずつ入れておき、下に届いたぶんだけ下のいちばん底から上へ戻す
+  //   (上は減らず、下も増えない。落ちる滴だけがずっと続く)
+  let infinite = false;
+  const infTarget = [0, 0];   // 色ごと: 受け取る側の部屋に置いておく量
   function init() {
     N = 0;
     // 上の部屋に2色とも入れる: 青はほぼ満タン、ピンクはV字の底に(奥行きが違うので重なって見える)
     const sp = SP * 0.9;   // 自重で少し縮むぶん、詰めて入れる
     // 青とピンクは表と裏の別の層にあるので、同じ場所に重ねて入れる
     for (const t of [0, 1]) {
-      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > SKIRT_END + 5; yy -= sp * 0.866, row++) {   // コップの縁のすぐ下までたっぷり(縁の外にははみ出さない)
+      const topEnd = infinite ? PLATE_Y + 6 : SKIRT_END + 5;   // ずっとモードは半分くらい
+      for (let yy = PLATE_Y + PLATE_V - 4, row = 0; yy > topEnd; yy -= sp * 0.866, row++) {   // コップの縁のすぐ下までたっぷり(縁の外にははみ出さない)
         const y = yy;
         const lim = PLATE_HW - 6;   // コップの中だけ
         for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim; x += sp) {
           const top = plateTop(x) - 4;
           if (yy > top || N >= MAXN) continue;
-          if (t === 1 && top - yy > (top - SKIRT_END - 5) * 0.45) continue;   // ピンクはV字の底側
+          if (t === 1 && top - yy > (top - topEnd) * 0.45) continue;   // ピンクはV字の底側
           X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = y;
           VX[N] = VY[N] = 0; T[N] = t; N++;
         }
       }
+    }
+    if (infinite) {
+      // 下の部屋にも、上と同じ量を底から入れる(色ごと)
+      const cnt = [0, 0]; for (let i = 0; i < N; i++) cnt[T[i]]++;
+      for (const t of [0, 1]) {
+        let left = cnt[t];
+        for (let yy = H - 3, row = 0; left > 0 && yy > H - PLATE_Y - PLATE_V; yy -= sp * 0.866, row++) {
+          const lim = halfW(yy) - 3;
+          for (let x = W / 2 - lim + (row & 1) * sp / 2; x <= W / 2 + lim && left > 0; x += sp) {
+            if (roomOf(x, yy) !== 2 || N >= MAXN) continue;
+            X[N] = PX[N] = x + (Math.random() - .5) * .3; Y[N] = PY[N] = yy;
+            VX[N] = VY[N] = 0; T[N] = t; N++; left--;
+          }
+        }
+        infTarget[t] = cnt[t] - left;
+      }
+      if (gby < 0) for (let i = 0; i < N; i++) { Y[i] = PY[i] = H - Y[i]; }   // ひっくり返した向きなら上下を入れ替えて置く
     }
     for (let i = 0; i < N; i++) ROOM[i] = roomOf(X[i], Y[i]);
     // 静止密度(格子の内部の粒子で測る)
@@ -251,7 +299,7 @@
       const q = Math.hypot(X[j] - X[bi], Y[j] - Y[bi]) / R;
       if (q < 1) r += (1 - q) * (1 - q);
     }
-    rho0 = r * 1.18;
+    if (!infinite || rho0 === 1) rho0 = r * 1.18;
     initBubbles();
   }
 
@@ -857,6 +905,11 @@
 
   function flip() { angT += Math.PI; }
   // 右下の回転ボタンで上下を入れ替える(押すたびにアイコンも回る)
+  const infBtn = document.getElementById('infBtn');
+  infBtn.addEventListener('click', () => {
+    infinite = !infinite; infBtn.setAttribute('aria-pressed', infinite ? 'true' : 'false');
+    init();   // 入れ方を変えて最初から(ずっとモード: 上下に半分ずつ / ふつう: 上にたっぷり)
+  });
   const rotateBtn = document.getElementById('rotateBtn'), rotateIcon = rotateBtn.querySelector('svg');
   let rotTurns = 0;
   rotateBtn.addEventListener('click', () => { flip(); rotTurns++; rotateIcon.style.transform = `rotate(${rotTurns * 180}deg)`; });
@@ -977,6 +1030,7 @@
       nozY[1] = openB ? yU - 8 * gs : -1;
     }
     for (let s = 0; s < SUB; s++) substep();
+    if (infinite) recycle();
     moveBubbles();
   }
   function loop(now) {
@@ -997,7 +1051,7 @@
   }
 
   resize(); init(); applyTheme(0);
-  window.__shake = { N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme, setTilt(x, y) { gsx = x; gsy = y; } };
+  window.__shake = { get infinite() { return infinite; }, N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme, setTilt(x, y) { gsx = x; gsy = y; } };
   requestAnimationFrame(loop);
 })();
 </script>
