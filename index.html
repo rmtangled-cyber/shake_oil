@@ -105,12 +105,22 @@
         SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
   // 当たり判定の範囲(遠い板は調べない)と、板の厚み(底は液の見た目がはみ出さないよう少し厚め、壁は細いすき間を通れるよう薄め)
   const SBX0 = new Float32Array(NS), SBX1 = new Float32Array(NS), SBY0 = new Float32Array(NS), SBY1 = new Float32Array(NS);
-  const SMG = new Float32Array(NS);
+  // 板の厚みは、コップの内側と外側で変える:
+  //   内側(たまった液の側): 厚め。液の見た目が板の線からはみ出さないように
+  //   外側の、細いすき間の入口のあたり: 薄め。滴がすき間へ入れるように
+  const SMG = new Float32Array(NS), SMGO = new Float32Array(NS), SIN = new Int8Array(NS);
   SEG.forEach(([x1, y1, x2, y2], i) => {
-    // 底のふち近く(細いすき間の入口)は薄めにして、滴がすき間へ入れるようにする
     const nearEdge = Math.max(Math.abs(x1 - W / 2), Math.abs(x2 - W / 2)) > PLATE_HW - 10;
-    SMG[i] = SKIND[i] === 0 ? (nearEdge ? 1.2 : 5) : SKIND[i] === 1 ? 1.2 : 2;
-    const e = SMG[i] + 12;
+    if (SKIND[i] === 2) { SMG[i] = SMGO[i] = 2; }
+    else {
+      SMG[i] = SKIND[i] === 0 ? 5 : 4;
+      SMGO[i] = SKIND[i] === 1 || nearEdge ? 1.2 : 5;
+      // コップの内側を指す向き(コップの真ん中あたりの点が、板のどちら側にあるか)
+      const top = (y1 + y2) / 2 < H / 2, ry = top ? (SKIRT_END + PLATE_Y) / 2 : H - (SKIRT_END + PLATE_Y) / 2;
+      const l = Math.hypot(x2 - x1, y2 - y1), nx = -(y2 - y1) / l, ny = (x2 - x1) / l;
+      SIN[i] = ((W / 2 - x1) * nx + (ry - y1) * ny) > 0 ? 1 : -1;
+    }
+    const e = Math.max(SMG[i], SMGO[i]) + 12;
     SBX0[i] = Math.min(x1, x2) - e; SBX1[i] = Math.max(x1, x2) + e; SBY0[i] = Math.min(y1, y2) - e; SBY1[i] = Math.max(y1, y2) + e;
     SX[i] = x1; SY[i] = y1; SDX[i] = x2 - x1; SDY[i] = y2 - y1;
     SL2[i] = SDX[i] * SDX[i] + SDY[i] * SDY[i];
@@ -226,6 +236,11 @@
     if (Math.abs(x - W / 2) < PLATE_HW) return false;
     return (y > SKIRT_END - 2 && y < PLATE_Y + 6) || (y > H - PLATE_Y - 6 && y < H - SKIRT_END + 2);
   }
+  // 受け取る側の山のふち(細いすき間の入口のすぐ上): 山から滑ってきた液は、ここで止まらずにすき間へ流れ込む
+  function mouthZone(x, y) {
+    if (Math.abs(x - W / 2) < PLATE_HW - 14) return false;
+    return gby >= 0 ? (y > H - PLATE_Y - 34 && y < H - PLATE_Y + 2) : (y > PLATE_Y - 2 && y < PLATE_Y + 34);
+  }
   // すき間に入れるか: 入口の上(重力と反対向き)に積み重なっている同じ色の液の量(=押す力)で決める。
   // 強く振ったときは、その勢いで膜を破って入れる
   const GAP_STRONG = 34, GAP_WEAK = 2, SHAKE_BREAK = 0.04;
@@ -252,12 +267,16 @@
       if (s >= NPLATE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
       const x = X[i], y = Y[i];
       if (x < SBX0[s] || x > SBX1[s] || y < SBY0[s] || y > SBY1[s]) continue;
-      const m = SMG[s];
       const s0 = (PX[i] - SX[s]) * SNX[s] + (PY[i] - SY[s]) * SNY[s];
       const s1 = (x - SX[s]) * SNX[s] + (y - SY[s]) * SNY[s];
       let t = ((x - SX[s]) * SDX[s] + (y - SY[s]) * SDY[s]) / SL2[s];
       if (t < 0) t = 0; else if (t > 1) t = 1;
       const qx = SX[s] + SDX[s] * t, qy = SY[s] + SDY[s] * t;
+      // 内側か外側かで厚みを変える。お皿の外側は、すき間の入口に近づくほどなめらかに薄くする(段差ができないように)
+      let m;
+      if ((s0 !== 0 ? s0 : s1) * SIN[s] > 0) m = SMG[s];
+      else if (SKIND[s] === 0) m = 1.2 + 3.8 * Math.min(1, Math.max(0, (PLATE_HW - 2 - Math.abs(qx - W / 2)) / 14));
+      else m = SMGO[s];
       const dx = x - qx, dy = y - qy, d2 = dx * dx + dy * dy;
       if (s0 * s1 < 0 && t > 0 && t < 1) {
         // 通り抜け防止: 前の位置の側へ戻す
@@ -283,7 +302,7 @@
       let g = GRAV[T[i]] * DSCALE[i];
       const nz = nozY[T[i]];
       if (nz >= 0 && Math.abs(X[i] - W / 2) < HOLE + 6 && Math.abs(Y[i] - nz) < 18) g *= 4;
-      if (inChanZone(X[i], Y[i])) g *= 3;   // 細いすき間に入った液は、細い流れになってすっと下りていく
+      if (inChanZone(X[i], Y[i]) || (ROOM[i] === 1 && mouthZone(X[i], Y[i]))) g *= 3;   // 細いすき間に入った液は、細い流れになってすっと下りていく
       // 薄いのは真ん中の落ちる部分だけ。仕切りの上に乗った液は、ふつうの速さで端へ流れる
       const yy = gby >= 0 ? Y[i] : H - Y[i];
       // 薄い所(コップの外側)では壁にはさまれてゆっくり。受け皿の山の上の液は、ふつうの速さで端へ流れる
@@ -327,7 +346,7 @@
       // 厚い部屋の中は引っぱり合い(表面張力)を弱めて、液面が平らに広がるようにする
       let pr = K * (rho - rho0);
       if (inCup && pr < 0) pr *= 0.4;
-      const chanI = inChanZone(xi, yi);
+      const chanI = inChanZone(xi, yi) || (ROOM[i] === 1 && mouthZone(xi, yi));
       if (chanI && pr < 0) pr = 0;   // 細いすき間の中の流れは、上の液のかたまりに引き戻されない
       const prN = KN * rhoN;
       let sx = 0, sy = 0;
