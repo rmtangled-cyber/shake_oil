@@ -75,9 +75,14 @@
   .mlbl { font-size:11px; letter-spacing:.14em; color:var(--sub); padding:2px 4px 0; }
   .mitem[aria-checked="true"] { border-color:var(--sub); background:#fff; }
   .mitem .tm { font-size:12px; color:var(--sub); }
-  #shapeList { display:flex; flex-direction:column; gap:6px; padding-left:10px; }
-  #shapeList[hidden] { display:none; }
-  #shapeList .mitem { padding:9px 12px; }
+  [data-mode="edit"] { cursor:default; color:var(--sub); }
+  /* タイマーモードの時間ボタン(右下) */
+  #timeBtns { display:flex; flex-direction:column; gap:12px; }
+  #timeBtns[hidden] { display:none; }
+  #timeBtns .fab { flex-direction:column; gap:0; color:var(--sub); font-variant-numeric:tabular-nums; }
+  #timeBtns .fab b { font-size:17px; font-weight:600; line-height:1; }
+  #timeBtns .fab small { font-size:9px; line-height:1.2; letter-spacing:.05em; }
+  #timeBtns .fab[aria-checked="true"] { color:var(--fg); background:#ffffffe6; border-color:var(--sub); box-shadow:0 0 0 2px #ffffff99, 0 2px 10px #00000014; }
   @media (prefers-reduced-motion: reduce) { #menu, #scrim, #menuBtn span, #rotateBtn svg { transition:none; } }
   #fps { position:fixed; left:0; right:0; text-align:center; bottom:calc(30px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); opacity:.8; pointer-events:none; }
 </style>
@@ -93,6 +98,7 @@
 </div>
 <div id="seasons" role="radiogroup" aria-label="季節"></div>
 <div id="rightStack">
+  <div id="timeBtns" role="radiogroup" aria-label="タイマーの時間" hidden></div>
   <button id="infBtn" class="fab" aria-label="ずっと落ち続ける" aria-pressed="false">
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c-2-2.6-3.6-4-5.5-4a4 4 0 0 0 0 8c1.9 0 3.5-1.4 5.5-4s3.6-4 5.5-4a4 4 0 0 1 0 8c-1.9 0-3.5-1.4-5.5-4z"/></svg>
 </button>
@@ -111,7 +117,7 @@
     <button class="mitem" role="radio" data-mode="heal" aria-checked="true"><span>癒しモード</span></button>
     <button class="mitem" role="radio" data-mode="timer" aria-checked="false"><span>タイマーモード</span></button>
   </div>
-  <div id="shapeList" role="radiogroup" aria-label="タイマーの形" hidden></div>
+  <button class="mitem" data-mode="edit" aria-disabled="true"><span>編集モード</span><span class="soon">準備中</span></button>
 </nav>
 <div id="fps"></div>
 <div id="topProbe" style="position:fixed;left:0;top:0;width:0;height:var(--top-safe);visibility:hidden;pointer-events:none"></div>
@@ -168,7 +174,7 @@
   const SCAP = NBASE + 200;
   const lidMask = new Uint8Array(2);   // ビット0=Aを止める ビット1=Bを止める
   const crossOK = [false, false];      // 色ごと: ノズルの上と下の液がつながってよいか(ぶら下がる滴をつくる間だけ)
-  const DRIP_PERIOD = 2.4, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)
+  let DRIP_PERIOD = 2.4, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)。形によって変わる
   const SX = new Float32Array(SCAP), SY = new Float32Array(SCAP), SDX = new Float32Array(SCAP), SDY = new Float32Array(SCAP),
         SL2 = new Float32Array(SCAP), SNX = new Float32Array(SCAP), SNY = new Float32Array(SCAP);
   // 当たり判定の範囲(遠い板は調べない)と、板の厚み(底は液の見た目がはみ出さないよう少し厚め、壁は細いすき間を通れるよう薄め)
@@ -298,14 +304,14 @@
   //   ・砂時計: 飾りなし(約1分)
   //   ・ジグザグ: 斜めの段を左右に転がりながら下りる(約2分)
   //   ・水車: 落ちる滴で水車が回る(約3分)
-  //   ・らせん(S字): 長いカーブを、ゆっくり伝って下りる(約5分)
+  //   ・階段: ほぼ水平な細い棚が何段もあり、小さな粒が転がって端から次の段へ落ちる(約5分)。出口を小さくして粒を細かく
   // 容量は現実より多くてよい(ユーザー確認): 上の部屋は、終わりの手前まで裏で補充して減らないようにし、
   // 最後に補充をやめて落ちきる。DRAIN はその「補充をやめてから落ちきるまで」の秒数(測って決めた値)
   const SHAPES = [
     { id: 'hourglass', label: '砂時計', min: 1, drain: 54 },
     { id: 'zigzag',    label: 'ジグザグ', min: 2, drain: 55 },
     { id: 'wheel',     label: '水車', min: 3, drain: 45 },
-    { id: 'spiral',    label: 'らせん', min: 5, drain: 48 },
+    { id: 'stairs',    label: '階段', min: 5, drain: 259, drop: 0.32, period: 0.6 },   // 小さな出口: 小さな粒を短い間隔で
   ];
   function curve(x0, y0, x1, y1, bend, n) {   // ゆるいカーブ(はじめはなだらか、先へ行くほど下がる)
     const p = [];
@@ -316,8 +322,9 @@
     if (id === 'zigzag') return [
       [[152, 118], [64, 150]], [[48, 188], [136, 220]], [[152, 258], [64, 290]],
     ];
-    if (id === 'spiral') return [
-      curve(46, 110, 142, 168, 1.35, 12), curve(166, 214, 56, 278, 1.35, 12),
+    if (id === 'stairs') return [
+      [[60, 116], [150, 124]], [[140, 152], [50, 160]], [[60, 188], [150, 196]],
+      [[140, 224], [50, 232]], [[60, 260], [150, 268]], [[140, 296], [50, 304]],
     ];
     return [];
   }
@@ -1155,27 +1162,38 @@
   addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
   // モードの切り替え(癒し / タイマー)と、タイマーの形
   const modeBtns = [...document.querySelectorAll('[data-mode]')];
-  const shapeListEl = document.getElementById('shapeList');
+  // タイマーモードの時間ボタン(右下に縦に並ぶ。押すとその形で最初から)
+  const timeBtnsEl = document.getElementById('timeBtns');
   const shapeBtns = SHAPES.map((sh, k) => {
     const bt = document.createElement('button');
-    bt.className = 'mitem'; bt.setAttribute('role', 'radio');
-    bt.innerHTML = `<span>${sh.label}</span><span class="tm">約${sh.min}分</span>`;
-    bt.addEventListener('click', () => { shapeIdx = k; setMode('timer'); setMenu(false); });
-    shapeListEl.appendChild(bt); return bt;
+    bt.className = 'fab'; bt.setAttribute('role', 'radio'); bt.setAttribute('aria-label', `約${sh.min}分(${sh.label})`);
+    bt.innerHTML = `<b>${sh.min}</b><small>分</small>`;
+    bt.addEventListener('click', () => { shapeIdx = k; setMode('timer'); });
+    timeBtnsEl.appendChild(bt); return bt;
   });
   function setMode(m) {
     unlockAudio();
     mode = m;
     modeBtns.forEach(b => b.setAttribute('aria-checked', b.dataset.mode === m ? 'true' : 'false'));
     shapeBtns.forEach((b, k) => b.setAttribute('aria-checked', m === 'timer' && k === shapeIdx ? 'true' : 'false'));
-    shapeListEl.hidden = m !== 'timer';
-    // タイマーモードでは「ずっと落ち続ける」は使わない
-    infinite = false; infBtn.setAttribute('aria-pressed', 'false'); infBtn.style.display = m === 'timer' ? 'none' : '';
+    // タイマーモード: 右下は時間ボタンだけ(∞・センサー・回転は出さない)
+    const tm = m === 'timer';
+    timeBtnsEl.hidden = !tm;
+    infinite = false; infBtn.setAttribute('aria-pressed', 'false');
+    infBtn.style.display = tm ? 'none' : '';
+    rotateBtn.style.display = tm ? 'none' : '';
+    sBtn.style.display = tm || !sensorAvail ? 'none' : 'flex';
+    if (tm && sensorOn) setSensor(false);
     restart();
   }
-  modeBtns.forEach(b => b.addEventListener('click', () => { if (b.dataset.mode === 'timer' && mode !== 'timer') setMode('timer'); else if (b.dataset.mode === 'heal') { setMode('heal'); setMenu(false); } }));
+  modeBtns.forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.mode === 'edit') return;   // 編集モード(中身はあとで作る)
+    setMode(b.dataset.mode); setMenu(false);
+  }));
   // 最初から(いまの向きで、上の部屋にたっぷり入れ直す)
   function restart() {
+    const per = mode === 'timer' ? (SHAPES[shapeIdx].period || 2.4) : 2.4;
+    DRIP_PERIOD = per; DRIP_OPEN = per * 0.4;
     layoutFlip = gby < 0;
     init();
     buildDeco();
@@ -1185,7 +1203,8 @@
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensorBtn');
   let sax = 0, say = 0, gsx = 0, gsy = 1, sensorOn = false;
-  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'flex';   // スマホのときだけ
+  const sensorAvail = 'DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches;   // スマホのときだけ
+  if (sensorAvail) sBtn.style.display = 'flex';
   function onMotion(e) {
     const a = e.acceleration, g = e.accelerationIncludingGravity;
     if (a && a.x != null) { sax = a.x; say = -a.y; }
@@ -1243,8 +1262,9 @@
     // ピンクは量が青の半分ほどなので、2回に1回だけ出す(最後まで交互に落ちるように)
     const phaseA = dripT % DRIP_PERIOD, phaseB = (dripT + DRIP_PERIOD / 2) % (DRIP_PERIOD * 2);
     // 滴の大きさは毎回ばらばら(写真の実物と同じく大小が混ざる)
-    if (phaseA < 1 / 60) { dropDone[0] = false; dropSize[0] = DROP_N * (0.6 + Math.random() * 0.9); }
-    if (phaseB < 1 / 60) { dropDone[1] = false; dropSize[1] = DROP_N * (0.6 + Math.random() * 0.9); }
+    const dsc = mode === 'timer' ? (SHAPES[shapeIdx].drop || 1) : 1;
+    if (phaseA < 1 / 60) { dropDone[0] = false; dropSize[0] = Math.max(4, DROP_N * dsc * (0.6 + Math.random() * 0.9)); }
+    if (phaseB < 1 / 60) { dropDone[1] = false; dropSize[1] = Math.max(4, DROP_N * dsc * (0.6 + Math.random() * 0.9)); }
     simT += 1 / 60;
     if (f < 0) { lidMask.fill(3); nozY[0] = nozY[1] = -1; crossOK[0] = crossOK[1] = false; }   // 回転の途中は全部閉じる
     else {
