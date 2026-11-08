@@ -27,38 +27,47 @@
     background:radial-gradient(closest-side, #0000002a, transparent); pointer-events:none; will-change:transform; }
   button { font:inherit; font-size:15px; color:var(--fg); cursor:pointer; }
   button:focus-visible { outline:2px solid var(--sub); outline-offset:2px; }
-  /* 左上の三本線 */
-  #menuBtn { position:fixed; z-index:20; top:calc(10px + env(safe-area-inset-top)); left:calc(10px + env(safe-area-inset-left));
-    width:44px; height:44px; padding:0; border:0; border-radius:12px; background:transparent;
-    display:flex; flex-direction:column; justify-content:center; align-items:center; gap:5px; }
-  #menuBtn span { display:block; width:20px; height:2px; border-radius:1px; background:var(--sub); opacity:.75;
+  /* 画面の角に置く丸いボタン(左下=メニュー、右下=上下入れ替え、右上=季節) */
+  .fab { position:fixed; z-index:20; width:46px; height:46px; padding:0; border-radius:50%;
+    border:1px solid #ffffffcc; background:#ffffff8c; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    box-shadow:0 2px 10px #0000000d; display:flex; align-items:center; justify-content:center; }
+  .fab:active { transform:scale(.94); }
+  #menuBtn { left:calc(14px + env(safe-area-inset-left)); bottom:calc(14px + env(safe-area-inset-bottom));
+    flex-direction:column; gap:5px; }
+  #menuBtn span { display:block; width:18px; height:2px; border-radius:1px; background:var(--sub);
     transition:transform .25s, opacity .25s; }
   #menuBtn[aria-expanded="true"] span:nth-child(1) { transform:translateY(7px) rotate(45deg); }
   #menuBtn[aria-expanded="true"] span:nth-child(2) { opacity:0; }
   #menuBtn[aria-expanded="true"] span:nth-child(3) { transform:translateY(-7px) rotate(-45deg); }
-  /* メニュー(左から出てくる) */
+  #rotateBtn { right:calc(14px + env(safe-area-inset-right)); bottom:calc(14px + env(safe-area-inset-bottom)); }
+  #rotateBtn svg { width:24px; height:24px; stroke:var(--sub); fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;
+    transition:transform .5s ease; }
+  #seasons { position:fixed; z-index:20; top:calc(14px + env(safe-area-inset-top)); right:calc(14px + env(safe-area-inset-right));
+    display:flex; flex-direction:column; gap:10px; }
+  #seasons .fab { position:static; width:42px; height:42px; font-size:20px; line-height:1; opacity:.8; }
+  #seasons .fab[aria-checked="true"] { opacity:1; background:#ffffffdd; border-color:var(--sub); box-shadow:0 0 0 2px #ffffff99, 0 2px 10px #00000014; }
+  /* メニュー(左下のボタンの上に開く) */
   #scrim { position:fixed; inset:0; z-index:10; background:#0000; transition:background .25s; }
   #scrim.open { background:#00000014; }
-  #menu { position:fixed; z-index:15; top:0; bottom:0; left:0; width:min(280px, 82vw);
-    padding:calc(64px + env(safe-area-inset-top)) 18px calc(20px + env(safe-area-inset-bottom)) max(18px, calc(env(safe-area-inset-left) + 12px));
-    background:#ffffffc4; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
-    border-radius:0 20px 20px 0; box-shadow:4px 0 24px #0000000f;
-    display:flex; flex-direction:column; gap:22px; transform:translateX(-105%); transition:transform .28s ease; }
-  #menu.open { transform:none; }
-  .msec { display:flex; flex-direction:column; gap:10px; }
-  .mlbl { font-size:12px; letter-spacing:.12em; color:var(--sub); }
-  .seasons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .seasons button, #flip { padding:10px 12px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; text-align:left; }
-  .seasons button[aria-checked="true"] { border-color:var(--sub); background:#fff; }
-  #sensor { display:none; align-items:center; justify-content:space-between; gap:10px; width:100%;
-    padding:10px 12px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; }
-  @media (prefers-reduced-motion: reduce) { #menu, #scrim, #menuBtn span { transition:none; } }
+  #menu { position:fixed; z-index:15; left:calc(14px + env(safe-area-inset-left)); bottom:calc(72px + env(safe-area-inset-bottom));
+    width:min(270px, calc(100vw - 28px)); padding:12px;
+    background:#ffffffd0; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-radius:18px; box-shadow:0 6px 28px #00000014;
+    display:flex; flex-direction:column; gap:8px; transform-origin:left bottom;
+    opacity:0; transform:translateY(8px) scale(.96); pointer-events:none; transition:opacity .2s ease, transform .2s ease; }
+  #menu.open { opacity:1; transform:none; pointer-events:auto; }
+  .mitem { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
+    padding:12px 14px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; text-align:left; }
+  .mitem .soon { font-size:11px; color:var(--sub); border:1px solid #0000001a; border-radius:999px; padding:2px 8px; }
+  #timerMode { cursor:default; color:var(--sub); }
+  @media (prefers-reduced-motion: reduce) { #menu, #scrim, #menuBtn span, #rotateBtn svg { transition:none; } }
+  #sensor { display:none; }
   #sensor .track { width:38px; height:22px; border-radius:11px; background:#d9d0d6; position:relative; transition:background .2s; flex:none; }
   #sensor .knob { position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff;
     box-shadow:0 1px 3px #0003; transition:transform .2s; }
   #sensor[aria-checked="true"] .track { background:#7d8cf0; }
   #sensor[aria-checked="true"] .knob { transform:translateX(16px); }
-  #fps { position:fixed; left:8px; bottom:calc(2px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); }
+  #fps { position:fixed; left:calc(10px + env(safe-area-inset-left)); top:calc(6px + env(safe-area-inset-top)); font-size:10px; color:var(--sub); opacity:.8; }
 </style>
 </head>
 <body>
@@ -70,17 +79,15 @@
   <div id="shadow"></div>
   <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
 </div>
-<button id="menuBtn" aria-label="メニュー" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
+<div id="seasons" role="radiogroup" aria-label="季節"></div>
+<button id="rotateBtn" class="fab" aria-label="上下を入れ替える">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9"/><path d="M5.5 2.8v3.6h3.6"/><path d="M4 13a8 8 0 0 0 14.3 4.9"/><path d="M18.5 21.2v-3.6h-3.6"/></svg>
+</button>
+<button id="menuBtn" class="fab" aria-label="メニュー" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
 <div id="scrim" hidden></div>
 <nav id="menu" aria-label="メニュー" inert>
-  <div class="msec">
-    <div class="mlbl">季節</div>
-    <div class="seasons" id="seasons" role="radiogroup" aria-label="季節"></div>
-  </div>
-  <div class="msec">
-    <button id="flip">ひっくり返す</button>
-    <button id="sensor" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
-  </div>
+  <button id="timerMode" class="mitem" aria-disabled="true"><span>タイマーモード</span><span class="soon">準備中</span></button>
+  <button id="sensor" class="mitem" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
 </nav>
 <div id="fps"></div>
 <script>
@@ -814,8 +821,8 @@
   function resize() {
     vw = innerWidth; vh = innerHeight;
     dpr = Math.min(2, window.devicePixelRatio || 1);
-    scale = Math.min((vh - 90) / OH, (vw * 0.74) / OW);
-    homeX = (vw - OW * scale) / 2; homeY = (vh - OH * scale) / 2 - 6;
+    scale = Math.min((vh - 130) / OH, (vw * 0.68) / OW);   // 角のボタンに重ならない大きさ
+    homeX = (vw - OW * scale) / 2; homeY = (vh - OH * scale) / 2 - 4;
     if (!dragging) { bx = tx = homeX; by = ty = homeY; }
     bottleEl.style.width = OW * scale + 'px'; bottleEl.style.height = OH * scale + 'px';
     bottleEl.style.transformOrigin = `${OW * scale / 2}px ${OH * scale / 2}px`;
@@ -842,12 +849,16 @@
   stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
 
   function flip() { angT += Math.PI; }
-  document.getElementById('flip').addEventListener('click', flip);
-  // 季節(メニューの中から選ぶ)
+  // 右下の回転ボタンで上下を入れ替える(押すたびにアイコンも回る)
+  const rotateBtn = document.getElementById('rotateBtn'), rotateIcon = rotateBtn.querySelector('svg');
+  let rotTurns = 0;
+  rotateBtn.addEventListener('click', () => { flip(); rotTurns++; rotateIcon.style.transform = `rotate(${rotTurns * 180}deg)`; });
+  // 右上に縦に並んだ季節のアイコン
   const seasonsEl = document.getElementById('seasons');
   const seasonBtns = THEMES.map((th, k) => {
+    const [label, icon] = th.name.split(' ');
     const bt = document.createElement('button');
-    bt.setAttribute('role', 'radio'); bt.textContent = th.name;
+    bt.className = 'fab'; bt.setAttribute('role', 'radio'); bt.setAttribute('aria-label', label); bt.textContent = icon;
     bt.addEventListener('click', () => applyTheme(k));
     seasonsEl.appendChild(bt); return bt;
   });
@@ -860,7 +871,7 @@
     drawGlass(scale, dpr);
   }
 
-  // 左上の三本線で開け閉めするメニュー
+  // 左下の三本線で開け閉めするメニュー
   const menuBtn = document.getElementById('menuBtn'), menuEl = document.getElementById('menu'), scrim = document.getElementById('scrim');
   function setMenu(open) {
     menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -871,12 +882,13 @@
   menuBtn.addEventListener('click', () => setMenu(menuBtn.getAttribute('aria-expanded') !== 'true'));
   scrim.addEventListener('pointerdown', () => setMenu(false));
   addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
-  document.getElementById('flip').addEventListener('click', () => setMenu(false));   // ひっくり返すところが見えるように閉じる
+  // タイマーモード(中身はあとで作る)
+  document.getElementById('timerMode').addEventListener('click', e => e.preventDefault());
 
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensor');
   let sax = 0, say = 0, gsx = 0, gsy = 1, sensorOn = false;
-  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'flex';
+  if ('DeviceMotionEvent' in window && matchMedia('(pointer: coarse)').matches) sBtn.style.display = 'flex';   // スマホのときだけ
   function onMotion(e) {
     const a = e.acceleration, g = e.accelerationIncludingGravity;
     if (a && a.x != null) { sax = a.x; say = -a.y; }
