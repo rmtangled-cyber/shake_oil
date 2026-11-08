@@ -475,6 +475,8 @@
       // 厚い部屋の液は奥行きのある塊: 少し上から見ているので、手前の面の上に「液の上面」が見える。
       // 下に向かって奥行きぶん調べ、その位置の液(厚い部屋の液だけ)の上面がここに見えるかを求める
       float topD = 0., hitK = 9., mA = 0., mB = 0.;
+      // 液の手前の面が何px下にあるかを、となりの2点の間で補間して求める(段々のすじが出ないように)
+      float prevD = max(c.r, c.g) * (1. - thinAt(w));
       // 上下の部屋のまわりで、手前の面に隠れていない所だけ調べる(真ん中ではすぐ終わるので軽い)
       float front0 = max(ab, ap);
       bool zone = thinAt(w) < .99 || thinAt(w + vec2(0., uDepth)) < .99;
@@ -486,7 +488,8 @@
         float thick = 1. - thinAt(vec2(w.x, ys));
         vec4 cs = texture2D(uF, vUv - vec2(0., sd / uSize.y));
         float d = max(cs.r, cs.g) * thick;
-        if (d > TH && hitK > 8.) hitK = float(k);
+        if (d > TH && hitK > 8.) hitK = float(k) - 1. + clamp((TH - prevD) / max(d - prevD, 1e-3), 0., 1.);
+        prevD = d;
         mA = max(mA, cs.r * thick); mB = max(mB, cs.g * thick);
         topD = max(topD, d);
       }
@@ -529,7 +532,7 @@
       if (uTop > .003) {
         // 層ごとの上面。2つの層が重なって見えるところは、手前の面と同じく色を掛け合わせる
         float tA = smoothstep(TH - .05, TH + .05, mA), tB = smoothstep(TH - .05, TH + .05, mB);
-        float f = (hitK - 1.) / 5.;                             // 0=手前の縁 1=奥の縁
+        float f = clamp(hitK / 6., 0., 1.);                      // 0=手前の縁 1=奥の縁(なめらか)
         // 上面の色は手前の面の上の縁とほぼ同じ色から始め、奥へ向かって少し明るく、ふんわり薄くなる(線は引かない)
         vec3 liteA = mix(mix(uA0, uA1, .62), mix(uA0, vec3(1.), .2), f * .8);
         vec3 liteB = mix(mix(uB0, uB1, .62), mix(uB0, vec3(1.), .2), f * .8);
