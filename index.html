@@ -6,7 +6,8 @@
 <meta name="theme-color" content="#f6f1f4">
 <title>シェイク・オイル</title>
 <style>
-  :root { --fg:#4a4148; --sub:#958a92; --panel:#ffffffb0; --bg1:#fdfbfc; --bg2:#f3e6ee; --glow1:#ffd6e6; --glow2:#d8dcff; }
+  :root { --top-safe:max(58px, calc(env(safe-area-inset-top) + 12px));   /* 上の端から離す量(ブラウザの上の帯に隠れないように) */
+    --fg:#4a4148; --sub:#958a92; --panel:#ffffffb0; --bg1:#fdfbfc; --bg2:#f3e6ee; --glow1:#ffd6e6; --glow2:#d8dcff; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; color:var(--fg);
     font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
@@ -42,7 +43,9 @@
   #rotateBtn { right:calc(14px + env(safe-area-inset-right)); bottom:calc(14px + env(safe-area-inset-bottom)); }
   #rotateBtn svg { width:24px; height:24px; stroke:var(--sub); fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;
     transition:transform .5s ease; }
-  #seasons { position:fixed; z-index:20; top:calc(14px + env(safe-area-inset-top)); right:calc(14px + env(safe-area-inset-right));
+  /* ブラウザで開くと、画面のいちばん上(時計などの帯)の下にページが入りこむことがあり、
+     しかもその高さが env(safe-area-inset-top) で分からないことがある。上の端からは十分に離して置く */
+  #seasons { position:fixed; z-index:20; top:var(--top-safe); right:calc(14px + env(safe-area-inset-right));
     display:flex; flex-direction:column; gap:10px; }
   #seasons .fab { position:static; width:42px; height:42px; font-size:20px; line-height:1; opacity:.8; }
   #seasons .fab[aria-checked="true"] { opacity:1; background:#ffffffdd; border-color:var(--sub); box-shadow:0 0 0 2px #ffffff99, 0 2px 10px #00000014; }
@@ -67,7 +70,7 @@
     box-shadow:0 1px 3px #0003; transition:transform .2s; }
   #sensor[aria-checked="true"] .track { background:#7d8cf0; }
   #sensor[aria-checked="true"] .knob { transform:translateX(16px); }
-  #fps { position:fixed; left:calc(10px + env(safe-area-inset-left)); top:calc(6px + env(safe-area-inset-top)); font-size:10px; color:var(--sub); opacity:.8; }
+  #fps { position:fixed; left:0; right:0; text-align:center; bottom:calc(30px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); opacity:.8; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -90,6 +93,7 @@
   <button id="sensor" class="mitem" role="switch" aria-checked="false"><span>傾き・振りセンサー</span><span class="track"><span class="knob"></span></span></button>
 </nav>
 <div id="fps"></div>
+<div id="topProbe" style="position:fixed;left:0;top:0;width:0;height:var(--top-safe);visibility:hidden;pointer-events:none"></div>
 <script>
 (() => {
   'use strict';
@@ -821,8 +825,10 @@
   function resize() {
     vw = innerWidth; vh = innerHeight;
     dpr = Math.min(2, window.devicePixelRatio || 1);
-    scale = Math.min((vh - 130) / OH, (vw * 0.68) / OW);   // 角のボタンに重ならない大きさ
-    homeX = (vw - OW * scale) / 2; homeY = (vh - OH * scale) / 2 - 4;
+    // 上はブラウザの帯に隠れないぶん、下は左右の丸いボタンのぶんを空けて、その間の真ん中に置く
+    const topSafe = document.getElementById('topProbe').getBoundingClientRect().height || 58, bottomRes = 80;
+    scale = Math.min((vh - topSafe - bottomRes) / OH, (vw * 0.68) / OW);
+    homeX = (vw - OW * scale) / 2; homeY = topSafe + (vh - topSafe - bottomRes - OH * scale) / 2;
     if (!dragging) { bx = tx = homeX; by = ty = homeY; }
     bottleEl.style.width = OW * scale + 'px'; bottleEl.style.height = OH * scale + 'px';
     bottleEl.style.transformOrigin = `${OW * scale / 2}px ${OH * scale / 2}px`;
