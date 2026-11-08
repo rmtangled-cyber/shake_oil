@@ -16,6 +16,10 @@
       radial-gradient(60vmax 50vmax at 85% 25%, var(--glow1) 0%, transparent 60%),
       radial-gradient(50vmax 40vmax at 10% 85%, var(--glow2) 0%, transparent 60%),
       linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%); }
+  /* 季節の背景の絵(切り替えるとふわっと入れ替わる) */
+  .bgimg { position:fixed; inset:0; background:center / cover no-repeat; opacity:0; transition:opacity .6s ease; pointer-events:none; }
+  .bgimg.on { opacity:1; }
+  @media (prefers-reduced-motion: reduce) { .bgimg { transition:none; } }
   #stage { position:fixed; inset:0; }
   #bottle { position:absolute; left:0; top:0; will-change:transform; }
   #bottle canvas { position:absolute; display:block; }
@@ -58,6 +62,10 @@
 </style>
 </head>
 <body>
+<div class="bgimg" style="background-image:url(bg/spring.jpg)"></div>
+<div class="bgimg" style="background-image:url(bg/summer.jpg)"></div>
+<div class="bgimg" style="background-image:url(bg/autumn.jpg)"></div>
+<div class="bgimg" style="background-image:url(bg/winter.jpg)"></div>
 <div id="stage">
   <div id="shadow"></div>
   <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
@@ -848,6 +856,7 @@
     const [b1, b2, g1, g2] = THEMES[theme].css, st = document.documentElement.style;
     st.setProperty('--bg1', b1); st.setProperty('--bg2', b2); st.setProperty('--glow1', g1); st.setProperty('--glow2', g2);
     seasonBtns.forEach((bt, k) => bt.setAttribute('aria-checked', k === theme ? 'true' : 'false'));
+    document.querySelectorAll('.bgimg').forEach((el, k) => el.classList.toggle('on', k === theme));
     drawGlass(scale, dpr);
   }
 
