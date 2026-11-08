@@ -24,6 +24,8 @@
   #stage { position:fixed; inset:0; }
   #bottle { position:absolute; left:0; top:0; will-change:transform; }
   #bottle canvas { position:absolute; display:block; }
+  #deco, #wheel { transition:opacity .35s ease; pointer-events:none; }
+  #deco.off, #wheel.off { opacity:0; }
   #shadow { position:absolute; left:0; top:0; border-radius:50%;
     background:radial-gradient(closest-side, #0000002a, transparent); pointer-events:none; will-change:transform; }
   button { font:inherit; font-size:15px; color:var(--fg); cursor:pointer; }
@@ -70,7 +72,12 @@
   .mitem { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
     padding:12px 14px; border-radius:12px; border:1px solid #0000000d; background:#ffffffa8; text-align:left; }
   .mitem .soon { font-size:11px; color:var(--sub); border:1px solid #0000001a; border-radius:999px; padding:2px 8px; }
-  #timerMode { cursor:default; color:var(--sub); }
+  .mlbl { font-size:11px; letter-spacing:.14em; color:var(--sub); padding:2px 4px 0; }
+  .mitem[aria-checked="true"] { border-color:var(--sub); background:#fff; }
+  .mitem .tm { font-size:12px; color:var(--sub); }
+  #shapeList { display:flex; flex-direction:column; gap:6px; padding-left:10px; }
+  #shapeList[hidden] { display:none; }
+  #shapeList .mitem { padding:9px 12px; }
   @media (prefers-reduced-motion: reduce) { #menu, #scrim, #menuBtn span, #rotateBtn svg { transition:none; } }
   #fps { position:fixed; left:0; right:0; text-align:center; bottom:calc(30px + env(safe-area-inset-bottom)); font-size:10px; color:var(--sub); opacity:.8; pointer-events:none; }
 </style>
@@ -82,7 +89,7 @@
 <div class="bgimg" style="background-image:url(bg/winter.jpg)"></div>
 <div id="stage">
   <div id="shadow"></div>
-  <div id="bottle"><canvas id="gl"></canvas><canvas id="glass"></canvas></div>
+  <div id="bottle"><canvas id="gl"></canvas><canvas id="deco"></canvas><canvas id="wheel"></canvas><canvas id="glass"></canvas></div>
 </div>
 <div id="seasons" role="radiogroup" aria-label="季節"></div>
 <div id="rightStack">
@@ -99,7 +106,12 @@
 <button id="menuBtn" class="fab" aria-label="メニュー" aria-expanded="false" aria-controls="menu"><span></span><span></span><span></span></button>
 <div id="scrim" hidden></div>
 <nav id="menu" aria-label="メニュー" inert>
-  <button id="timerMode" class="mitem" aria-disabled="true"><span>タイマーモード</span><span class="soon">準備中</span></button>
+  <div class="mlbl">モード</div>
+  <div role="radiogroup" aria-label="モード" style="display:flex;flex-direction:column;gap:6px">
+    <button class="mitem" role="radio" data-mode="heal" aria-checked="true"><span>癒しモード</span></button>
+    <button class="mitem" role="radio" data-mode="timer" aria-checked="false"><span>タイマーモード</span></button>
+  </div>
+  <div id="shapeList" role="radiogroup" aria-label="タイマーの形" hidden></div>
 </nav>
 <div id="fps"></div>
 <div id="topProbe" style="position:fixed;left:0;top:0;width:0;height:var(--top-safe);visibility:hidden;pointer-events:none"></div>
@@ -151,18 +163,20 @@
   const NPLATE = SEG.length;
   SEG.push([W / 2 - HOLE - 1, PLATE_Y + PLATE_V, W / 2 + HOLE + 1, PLATE_Y + PLATE_V]); SKIND.push(2);          // 0: 容器の上側の仕切りのノズル
   SEG.push([W / 2 - HOLE - 1, H - PLATE_Y - PLATE_V, W / 2 + HOLE + 1, H - PLATE_Y - PLATE_V]); SKIND.push(2);  // 1: 容器の下側の仕切りのノズル
-  const NS = SEG.length;
+  const NBASE = SEG.length;            // ここまでが容器と仕切り。ここから後ろは形ごとの飾り(段・水車・らせん)
+  let NS = NBASE;
+  const SCAP = NBASE + 200;
   const lidMask = new Uint8Array(2);   // ビット0=Aを止める ビット1=Bを止める
   const crossOK = [false, false];      // 色ごと: ノズルの上と下の液がつながってよいか(ぶら下がる滴をつくる間だけ)
   const DRIP_PERIOD = 2.4, DRIP_OPEN = 0.95;   // 秒(青とピンクは半周期ずらして交互に)
-  const SX = new Float32Array(NS), SY = new Float32Array(NS), SDX = new Float32Array(NS), SDY = new Float32Array(NS),
-        SL2 = new Float32Array(NS), SNX = new Float32Array(NS), SNY = new Float32Array(NS);
+  const SX = new Float32Array(SCAP), SY = new Float32Array(SCAP), SDX = new Float32Array(SCAP), SDY = new Float32Array(SCAP),
+        SL2 = new Float32Array(SCAP), SNX = new Float32Array(SCAP), SNY = new Float32Array(SCAP);
   // 当たり判定の範囲(遠い板は調べない)と、板の厚み(底は液の見た目がはみ出さないよう少し厚め、壁は細いすき間を通れるよう薄め)
-  const SBX0 = new Float32Array(NS), SBX1 = new Float32Array(NS), SBY0 = new Float32Array(NS), SBY1 = new Float32Array(NS);
+  const SBX0 = new Float32Array(SCAP), SBX1 = new Float32Array(SCAP), SBY0 = new Float32Array(SCAP), SBY1 = new Float32Array(SCAP);
   // 板の厚みは、コップの内側と外側で変える:
   //   内側(たまった液の側): 厚め。液の見た目が板の線からはみ出さないように
   //   外側の、細いすき間の入口のあたり: 薄め。滴がすき間へ入れるように
-  const SMG = new Float32Array(NS), SMGO = new Float32Array(NS), SIN = new Int8Array(NS);
+  const SMG = new Float32Array(SCAP), SMGO = new Float32Array(SCAP), SIN = new Int8Array(SCAP);
   SEG.forEach(([x1, y1, x2, y2], i) => {
     const nearEdge = Math.max(Math.abs(x1 - W / 2), Math.abs(x2 - W / 2)) > PLATE_HW - 10;
     if (SKIND[i] === 2) { SMG[i] = SMGO[i] = 2; }
@@ -180,6 +194,15 @@
     SL2[i] = SDX[i] * SDX[i] + SDY[i] * SDY[i];
     const l = Math.sqrt(SL2[i]); SNX[i] = -SDY[i] / l; SNY[i] = SDX[i] / l;
   });
+  // 飾りの板を1本置く(両側とも同じ薄さ)
+  function setSeg(i, x1, y1, x2, y2) {
+    SMG[i] = SMGO[i] = 2.6; SIN[i] = 0;
+    const e = 2.6 + 12;
+    SBX0[i] = Math.min(x1, x2) - e; SBX1[i] = Math.max(x1, x2) + e; SBY0[i] = Math.min(y1, y2) - e; SBY1[i] = Math.max(y1, y2) + e;
+    SX[i] = x1; SY[i] = y1; SDX[i] = x2 - x1; SDY[i] = y2 - y1;
+    SL2[i] = SDX[i] * SDX[i] + SDY[i] * SDY[i] || 1e-6;
+    const l = Math.sqrt(SL2[i]); SNX[i] = -SDY[i] / l; SNY[i] = SDX[i] / l;
+  }
 
   // =========================================================
   // 季節の色。A=手前の液体 / B=奥の液体(それぞれ 明るい色 / 縁の濃い色)。css は背景の色
@@ -202,6 +225,8 @@
   const GRAV = [0.0105, 0.0095];           // どちらも透明な液体より重くて沈む。A(青)が少しだけ重い(写真では底に青の層)
   const DRAG = 0.972, VMAX = 3;   // 透明な液体の粘り気で、ゆっくり一定の速さで落ちる
   const DRAG_THIN = 0.945;        // 真ん中の薄いすき間では、壁にはさまれてさらにゆっくり
+  const DRAG_ROLL = 0.988;
+  const ROLL = new Uint8Array(1600);
   const DRAG_CUP = 0.99;          // 厚い部屋の中はさらさら流れて、液面がすぐ平らになる
   const WANDER = 0.005;          // 薄いすき間の中のゆるやかな横の流れ(列がジグザグにゆらぐ)
   let simT = 0;
@@ -231,6 +256,24 @@
     const p = plateTop(x);
     return y < p ? 0 : y > H - p ? 2 : 1;
   }
+  // タイマーモード: 上の部屋を、決めた量になるまで裏で補充する(下の液のいちばん底=見えない所から戻す)
+  const topTarget = [0, 0];
+  function refillTop() {
+    if (Math.abs(gby) < 0.3) return;
+    const rel = gby > 0 ? 0 : 2, recv = 2 - rel;
+    for (const t of [0, 1]) {
+      let c = 0; for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel) c++;
+      for (; c < topTarget[t]; c++) {
+        let deep = -1, dv = -1e9;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === recv) { const v = Y[i] * gby; if (v > dv) { dv = v; deep = i; } }
+        let k = 0, pick = -1;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel && Math.random() * ++k < 1) pick = i;
+        if (deep < 0 || pick < 0) break;
+        X[deep] = PX[deep] = X[pick] + (Math.random() - .5) * 2; Y[deep] = PY[deep] = Y[pick] - gby * (Math.random() * 2);
+        VX[deep] = VY[deep] = 0; ROOM[deep] = rel;
+      }
+    }
+  }
   function recycle() {
     if (Math.abs(gby) < 0.3) return;
     const recv = gby > 0 ? 2 : 0, rel = 2 - recv;
@@ -249,6 +292,118 @@
         VX[deep] = VY[deep] = 0; ROOM[deep] = rel;
       }
     }
+  }
+  // ---- タイマーモードの形 ----
+  //   どの形も、上の部屋から真ん中の穴を通って滴が落ちるのは同じ。真ん中の飾りと、落ちきるまでの時間が違う
+  //   ・砂時計: 飾りなし(約1分)
+  //   ・ジグザグ: 斜めの段を左右に転がりながら下りる(約2分)
+  //   ・水車: 落ちる滴で水車が回る(約3分)
+  //   ・らせん(S字): 長いカーブを、ゆっくり伝って下りる(約5分)
+  // 容量は現実より多くてよい(ユーザー確認): 上の部屋は、終わりの手前まで裏で補充して減らないようにし、
+  // 最後に補充をやめて落ちきる。DRAIN はその「補充をやめてから落ちきるまで」の秒数(測って決めた値)
+  const SHAPES = [
+    { id: 'hourglass', label: '砂時計', min: 1, drain: 54 },
+    { id: 'zigzag',    label: 'ジグザグ', min: 2, drain: 55 },
+    { id: 'wheel',     label: '水車', min: 3, drain: 45 },
+    { id: 'spiral',    label: 'らせん', min: 5, drain: 48 },
+  ];
+  function curve(x0, y0, x1, y1, bend, n) {   // ゆるいカーブ(はじめはなだらか、先へ行くほど下がる)
+    const p = [];
+    for (let k = 0; k <= n; k++) { const t = k / n; p.push([x0 + (x1 - x0) * t, y0 + (y1 - y0) * Math.pow(t, bend)]); }
+    return p;
+  }
+  function shapeLines(id) {   // 飾りの板(折れ線のリスト。ふつうの向きでの座標)
+    if (id === 'zigzag') return [
+      [[152, 118], [64, 150]], [[48, 188], [136, 220]], [[152, 258], [64, 290]],
+    ];
+    if (id === 'spiral') return [
+      curve(46, 110, 142, 168, 1.35, 12), curve(166, 214, 56, 278, 1.35, 12),
+    ];
+    return [];
+  }
+  const WHEEL = { x: 118, y: 212, r: 40, hub: 9, n: 6 };
+  let shapeIdx = 0, layoutFlip = false, decoOn = true;
+  let mode = 'heal', timerStart = 0, timerDone = false, flipPending = false, lastMid = -1, midSince = 0;
+  // 落ちきったときのやさしい音
+  let actx = null;
+  function unlockAudio() {
+    try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (_) {}
+  }
+  addEventListener('pointerdown', unlockAudio, { once: false, passive: true });
+  function chime() {
+    if (!actx) return;
+    const t0 = actx.currentTime + 0.05;
+    [[880, 0], [1318.5, 0.18], [1760, 0.36], [1318.5, 1.1], [1760, 1.28]].forEach(([f, d]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t0 + d); g.gain.linearRampToValueAtTime(0.12, t0 + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0008, t0 + d + 1.6);
+      o.connect(g).connect(actx.destination); o.start(t0 + d); o.stop(t0 + d + 1.7);
+    });
+  }
+  let wheelAng = 0, wheelW = 0;
+  const tf = (x, y) => layoutFlip ? [W - x, H - y] : [x, y];   // ふつうの向きの座標 → 容器の座標
+  function wheelCenter() { return tf(WHEEL.x, WHEEL.y); }
+  function buildDeco() {
+    let i = NBASE;
+    const id = mode === 'timer' ? SHAPES[shapeIdx].id : 'hourglass';
+    decoLines = [];
+    for (const line of shapeLines(id)) {
+      const pts = line.map(p => tf(...p)).sort((p, q) => p[0] - q[0]);
+      decoLines.push({ x0: pts[0][0], x1: pts[pts.length - 1][0], pts });
+      for (let k = 0; k + 1 < line.length; k++) { const [a, b] = tf(...line[k]), [c, d] = tf(...line[k + 1]); setSeg(i++, a, b, c, d); }
+    }
+    wheelBase = i;
+    if (id === 'wheel') {
+      const [cx, cy] = wheelCenter();
+      for (let k = 0; k < WHEEL.n; k++) i++;   // 羽根(毎回動かす)
+      for (let k = 0; k < 8; k++) {           // まんなかの軸
+        const a0 = k / 8 * Math.PI * 2, a1 = (k + 1) / 8 * Math.PI * 2;
+        setSeg(i++, cx + WHEEL.hub * Math.cos(a0), cy + WHEEL.hub * Math.sin(a0), cx + WHEEL.hub * Math.cos(a1), cy + WHEEL.hub * Math.sin(a1));
+      }
+      updateWheelSegs();
+    }
+    decoEnd = i;
+    NS = decoOn ? decoEnd : NBASE;
+    drawDeco();
+  }
+  let wheelBase = NBASE, decoEnd = NBASE, decoLines = [];
+  // 段やカーブの、どちら側にいるか(粒ごと)。段をはさんだ液どうしは引っぱり合わない(段の上と下でつながって垂れ下がらないように)
+  const SIDEM = new Uint8Array(1600), EXTM = new Uint8Array(1600);
+  function computeSides() {
+    const L = decoOn ? decoLines : [];
+    for (let i = 0; i < N; i++) {
+      let side = 0, ext = 0; const x = X[i];
+      for (let k = 0; k < L.length; k++) {
+        const ln = L[k]; if (x < ln.x0 - 4 || x > ln.x1 + 4) continue;
+        const p = ln.pts; let j = 1; while (j < p.length - 1 && p[j][0] < x) j++;
+        const t = Math.min(1, Math.max(0, (x - p[j - 1][0]) / ((p[j][0] - p[j - 1][0]) || 1)));
+        const yl = p[j - 1][1] + (p[j][1] - p[j - 1][1]) * t;
+        ext |= 1 << k; if (Y[i] > yl) side |= 1 << k;
+      }
+      SIDEM[i] = side; EXTM[i] = ext;
+    }
+  }
+  function updateWheelSegs() {
+    const [cx, cy] = wheelCenter();
+    for (let k = 0; k < WHEEL.n; k++) {
+      const a = wheelAng + k / WHEEL.n * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      setSeg(wheelBase + k, cx + WHEEL.hub * c, cy + WHEEL.hub * sn, cx + WHEEL.r * c, cy + WHEEL.r * sn);
+    }
+  }
+  function stepWheel() {
+    // 羽根に乗った液の重さで回る(重力の向きに対して、軸のどちら側に液が多いか)
+    const [cx, cy] = wheelCenter(); let tq = 0;
+    for (let i = 0; i < N; i++) {
+      const dx = X[i] - cx, dy = Y[i] - cy;
+      if (dx * dx + dy * dy < (WHEEL.r + 4) * (WHEEL.r + 4)) tq += dx * gby - dy * gbx;
+    }
+    wheelW = wheelW * 0.95 + tq * 0.0000045;
+    wheelW = Math.max(-0.05, Math.min(0.05, wheelW));
+    // 止まりきらず、ゆっくり回り続ける(羽根に液が引っかかったままにならないように)
+    if (Math.abs(wheelW) < 0.006) wheelW = (wheelW < 0 ? -1 : 1) * 0.006;
+    wheelAng += wheelW;
+    updateWheelSegs();
   }
   // ずっと落ち続けるモード: 上と下に半分ずつ入れておき、下に届いたぶんだけ下のいちばん底から上へ戻す
   //   (上は減らず、下も増えない。落ちる滴だけがずっと続く)
@@ -288,8 +443,10 @@
         }
         infTarget[t] = cnt[t] - left;
       }
-      if (gby < 0) for (let i = 0; i < N; i++) { Y[i] = PY[i] = H - Y[i]; }   // ひっくり返した向きなら上下を入れ替えて置く
     }
+    if (gby < 0) for (let i = 0; i < N; i++) { Y[i] = PY[i] = H - Y[i]; }   // ひっくり返した向きなら上下を入れ替えて置く
+    topTarget[0] = topTarget[1] = 0;
+    for (let i = 0; i < N; i++) if ((gby < 0 ? Y[i] > H / 2 : Y[i] < H / 2)) topTarget[T[i]]++;
     for (let i = 0; i < N; i++) ROOM[i] = roomOf(X[i], Y[i]);
     // 静止密度(格子の内部の粒子で測る)
     let bi = 0; const cx = W / 2, cy = 40;
@@ -357,9 +514,9 @@
   // 仕切りやふたに押し戻された粒は、押し戻された向きの速さを消す(はじき飛ばされないように)
   const HIT = new Uint8Array(MAXN), HNX = new Float32Array(MAXN), HNY = new Float32Array(MAXN);
   function collidePlates(i) {
-    HIT[i] = 0;
+    HIT[i] = 0; ROLL[i] = Math.max(0, ROLL[i] - 1);
     for (let s = 0; s < NS; s++) {
-      if (s >= NPLATE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
+      if (s >= NPLATE && s < NBASE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
       const x = X[i], y = Y[i];
       if (x < SBX0[s] || x > SBX1[s] || y < SBY0[s] || y > SBY1[s]) continue;
       const s0 = (PX[i] - SX[s]) * SNX[s] + (PY[i] - SY[s]) * SNY[s];
@@ -378,6 +535,7 @@
         const side = s0 > 0 ? 1 : -1;
         X[i] = qx + SNX[s] * m * side; Y[i] = qy + SNY[s] * m * side;
         HIT[i] = 1; HNX[i] = SNX[s] * side; HNY[i] = SNY[s] * side;
+        if (s >= NBASE) ROLL[i] = 6;
       } else if (d2 < m * m) {
         const d = Math.sqrt(d2);
         let nx, ny;
@@ -385,6 +543,7 @@
         else { nx = dx / d; ny = dy / d; }
         X[i] = qx + nx * m; Y[i] = qy + ny * m;
         HIT[i] = 1; HNX[i] = nx; HNY[i] = ny;
+        if (s >= NBASE) ROLL[i] = 6;
       }
     }
   }
@@ -402,7 +561,9 @@
       const yy = gby >= 0 ? Y[i] : H - Y[i];
       // 薄い所(コップの外側)では壁にはさまれてゆっくり。受け皿の山の上の液は、ふつうの速さで端へ流れる
       const thin = ROOM[i] === 1 && yy < H - PLATE_Y - PLATE_V - 40;
-      const dr = thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
+      // 段やカーブに乗っている滴は、すべるように転がっていく(段の上にたまらないように)
+      const dr = ROLL[i] ? DRAG_ROLL : thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
+      if (ROLL[i]) g *= 2.2;
       // 薄いすき間の中では、ゆるやかな流れで滴の列が左右にゆらぐ(色ごとに奥行きが違うので流れも少し違う)
       let wx = 0;
       if (thin) { const ph = T[i] * 2.1;
@@ -412,6 +573,8 @@
       X[i] += vx; Y[i] += vy;
     }
     buildGrid();
+    const sep = decoLines.length > 0 && decoOn;
+    if (sep) computeSides();
     for (let i = 0; i < N; i++) {
       const xi = X[i], yi = Y[i], ti = T[i];
       const c = cellOf[i], cx = c % GW, cy = (c / GW) | 0;
@@ -429,6 +592,7 @@
             if (d2 >= R2 || n >= 256) continue;
             // 青とピンクは表と裏の別の層にあるので、どこでもお互いにぶつからない(同じ色どうしだけ計算する)
             if (T[j] !== ti) continue;
+            if (sep && ((SIDEM[i] ^ SIDEM[j]) & EXTM[i] & EXTM[j])) continue;
             // 仕切りの向こう側(別の部屋)の液とは引っぱり合わない: 出た滴が穴へ引き戻されない
             // ぶら下がる滴をつくっている間だけ、ノズルの上と下の液がつながる。切れたあとは引き戻されない
             if (ROOM[j] !== ROOM[i] && !(crossOK[ti] && Math.abs(xi - W / 2) < HOLE + 16)) continue;
@@ -758,6 +922,47 @@
   const glassCv = document.getElementById('glass'), gx2 = glassCv.getContext('2d');
   const bottleEl = document.getElementById('bottle'), shadowEl = document.getElementById('shadow');
   const rgb = (c, a) => `rgba(${c.map(v => Math.round(v * 255)).join(',')},${a})`;
+  // 形ごとの飾り(透明なアクリルの段やカーブ)を描く
+  const decoCv = document.getElementById('deco'), dctx = decoCv.getContext('2d');
+  const wheelCv = document.getElementById('wheel'), wctx = wheelCv.getContext('2d');
+  function drawDeco() {
+    const ow = W + SIDE * 2, oh = H + CAP * 2;
+    decoCv.width = Math.round(ow * scale * dpr); decoCv.height = Math.round(oh * scale * dpr);
+    decoCv.style.width = ow * scale + 'px'; decoCv.style.height = oh * scale + 'px'; decoCv.style.left = decoCv.style.top = '0px';
+    const c = dctx;
+    c.setTransform(scale * dpr, 0, 0, scale * dpr, SIDE * scale * dpr, CAP * scale * dpr);
+    c.clearRect(-SIDE, -CAP, ow, oh);
+    const id = mode === 'timer' ? SHAPES[shapeIdx].id : 'hourglass';
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    for (const line of shapeLines(id)) {
+      c.beginPath(); line.forEach((p, k) => { const [x, y] = tf(...p); k ? c.lineTo(x, y) : c.moveTo(x, y); });
+      c.strokeStyle = 'rgba(255,255,255,0.85)'; c.lineWidth = 4.5; c.stroke();
+      c.strokeStyle = 'rgba(130,110,135,0.32)'; c.lineWidth = 1; c.stroke();
+    }
+    // 水車(回るので別のキャンバスに描いて、CSS で回す)
+    const wheelShow = id === 'wheel';
+    wheelCv.style.display = wheelShow ? 'block' : 'none';
+    if (wheelShow) {
+      const R0 = WHEEL.r + 4, sz = R0 * 2;
+      wheelCv.width = Math.round(sz * scale * dpr); wheelCv.height = Math.round(sz * scale * dpr);
+      wheelCv.style.width = sz * scale + 'px'; wheelCv.style.height = sz * scale + 'px';
+      const [cx, cy] = wheelCenter();
+      wheelCv.style.left = (SIDE + cx - R0) * scale + 'px'; wheelCv.style.top = (CAP + cy - R0) * scale + 'px';
+      const w = wctx; w.setTransform(scale * dpr, 0, 0, scale * dpr, R0 * scale * dpr, R0 * scale * dpr); w.clearRect(-R0, -R0, sz, sz);
+      w.lineCap = 'round';
+      w.beginPath(); w.arc(0, 0, WHEEL.r, 0, Math.PI * 2);
+      w.strokeStyle = 'rgba(255,255,255,0.6)'; w.lineWidth = 2; w.stroke();
+      for (let k = 0; k < WHEEL.n; k++) {
+        const a = k / WHEEL.n * Math.PI * 2;
+        w.beginPath(); w.moveTo(WHEEL.hub * Math.cos(a), WHEEL.hub * Math.sin(a)); w.lineTo(WHEEL.r * Math.cos(a), WHEEL.r * Math.sin(a));
+        w.strokeStyle = 'rgba(255,255,255,0.9)'; w.lineWidth = 4.5; w.stroke();
+        w.strokeStyle = 'rgba(130,110,135,0.35)'; w.lineWidth = 1; w.stroke();
+      }
+      w.beginPath(); w.arc(0, 0, WHEEL.hub, 0, Math.PI * 2);
+      w.fillStyle = 'rgba(255,255,255,0.9)'; w.fill(); w.strokeStyle = 'rgba(130,110,135,0.4)'; w.lineWidth = 1; w.stroke();
+      w.beginPath(); w.arc(0, 0, 2.5, 0, Math.PI * 2); w.fillStyle = 'rgba(130,110,135,0.45)'; w.fill();
+    }
+  }
   function drawGlass(scale, dpr) {
     const ow = W + SIDE * 2, oh = H + CAP * 2;
     glassCv.width = Math.round(ow * scale * dpr); glassCv.height = Math.round(oh * scale * dpr);
@@ -888,6 +1093,7 @@
     makeField(Math.round(glCv.width / 2), Math.round(glCv.height / 2));
     shadowEl.style.width = OW * scale * 1.3 + 'px'; shadowEl.style.height = 26 * scale + 'px';
     drawGlass(scale, dpr);
+    drawDeco();
   }
   addEventListener('resize', resize);
 
@@ -904,7 +1110,10 @@
   const up = () => { dragging = false; };
   stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
 
-  function flip() { angT += Math.PI; }
+  function flip() {
+    angT += Math.PI; flipPending = true;
+    decoOn = false; NS = NBASE; decoCv.classList.add('off'); wheelCv.classList.add('off');   // 回している間は飾りを消す
+  }
   // 右下の回転ボタンで上下を入れ替える(押すたびにアイコンも回る)
   const infBtn = document.getElementById('infBtn');
   infBtn.addEventListener('click', () => {
@@ -944,8 +1153,34 @@
   menuBtn.addEventListener('click', () => setMenu(menuBtn.getAttribute('aria-expanded') !== 'true'));
   scrim.addEventListener('pointerdown', () => setMenu(false));
   addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
-  // タイマーモード(中身はあとで作る)
-  document.getElementById('timerMode').addEventListener('click', e => e.preventDefault());
+  // モードの切り替え(癒し / タイマー)と、タイマーの形
+  const modeBtns = [...document.querySelectorAll('[data-mode]')];
+  const shapeListEl = document.getElementById('shapeList');
+  const shapeBtns = SHAPES.map((sh, k) => {
+    const bt = document.createElement('button');
+    bt.className = 'mitem'; bt.setAttribute('role', 'radio');
+    bt.innerHTML = `<span>${sh.label}</span><span class="tm">約${sh.min}分</span>`;
+    bt.addEventListener('click', () => { shapeIdx = k; setMode('timer'); setMenu(false); });
+    shapeListEl.appendChild(bt); return bt;
+  });
+  function setMode(m) {
+    unlockAudio();
+    mode = m;
+    modeBtns.forEach(b => b.setAttribute('aria-checked', b.dataset.mode === m ? 'true' : 'false'));
+    shapeBtns.forEach((b, k) => b.setAttribute('aria-checked', m === 'timer' && k === shapeIdx ? 'true' : 'false'));
+    shapeListEl.hidden = m !== 'timer';
+    // タイマーモードでは「ずっと落ち続ける」は使わない
+    infinite = false; infBtn.setAttribute('aria-pressed', 'false'); infBtn.style.display = m === 'timer' ? 'none' : '';
+    restart();
+  }
+  modeBtns.forEach(b => b.addEventListener('click', () => { if (b.dataset.mode === 'timer' && mode !== 'timer') setMode('timer'); else if (b.dataset.mode === 'heal') { setMode('heal'); setMenu(false); } }));
+  // 最初から(いまの向きで、上の部屋にたっぷり入れ直す)
+  function restart() {
+    layoutFlip = gby < 0;
+    init();
+    buildDeco();
+    timerStart = simT; timerDone = false;
+  }
 
   // モーションセンサー(iPhoneはボタンを押して許可が必要)
   const sBtn = document.getElementById('sensorBtn');
@@ -1030,6 +1265,24 @@
       nozY[0] = openA ? yU - 8 * gs : -1;
       nozY[1] = openB ? yU - 8 * gs : -1;
     }
+    // ひっくり返し終わったら、飾りを新しい向きで置き直し、タイマーなら最初から数える
+    if (flipPending && Math.abs(angT - ang) < 0.03 && Math.abs(angV) < 0.003) {
+      flipPending = false; layoutFlip = gby < 0; decoOn = true; buildDeco();
+      decoCv.classList.remove('off'); wheelCv.classList.remove('off');
+      if (mode === 'timer') { timerStart = simT; timerDone = false; }
+    }
+    if (decoOn && mode === 'timer' && SHAPES[shapeIdx].id === 'wheel') stepWheel();
+    if (mode === 'timer' && !flipPending) {
+      const sh = SHAPES[shapeIdx], el = simT - timerStart;
+      if (el < sh.min * 60 - sh.drain) refillTop();   // 終わりの手前までは上を減らさない
+      else if (!timerDone) {
+        let top = 0, mid = 0; const rel = gby > 0 ? 0 : 2;
+        for (let i = 0; i < N; i++) { if (ROOM[i] === rel) top++; else if (ROOM[i] === 1) mid++; }
+        // 上が空になり、真ん中も(ほぼ)空になったら終わり。少しだけ引っかかって残った液は待たない
+        if (top === 0 && mid !== lastMid) { lastMid = mid; midSince = el; }
+        if (top === 0 && (mid <= 4 || el - midSince > 4)) { timerDone = true; lastDoneAt = el; chime(); }
+      }
+    }
     for (let s = 0; s < SUB; s++) substep();
     if (infinite) recycle();
     moveBubbles();
@@ -1044,6 +1297,7 @@
     simMs = simMs * 0.9 + (performance.now() - t0) * 0.1;
     const tilt = Math.max(-0.2, Math.min(0.2, bvx * 0.008));
     bottleEl.style.transform = `translate3d(${bx}px,${by}px,0) rotate(${ang + tilt}rad)`;
+    if (wheelCv.style.display !== 'none') wheelCv.style.transform = `rotate(${wheelAng}rad)`;
     shadowEl.style.transform = `translate3d(${bx - OW * scale * 0.15}px,${homeY + OH * scale - 10 * scale}px,0)`;
     render();
     fpsN++; fpsT += dt;
@@ -1051,8 +1305,10 @@
     requestAnimationFrame(loop);
   }
 
-  resize(); init(); applyTheme(0);
-  window.__shake = { get infinite() { return infinite; }, N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme, setTilt(x, y) { gsx = x; gsy = y; } };
+  let lastDoneAt = -1;
+  resize(); init(); buildDeco(); applyTheme(0);
+  window.__shake = { get infinite() { return infinite; }, get timer() { return { mode, shapeIdx, el: simT - timerStart, done: timerDone, lastDoneAt }; },
+    setShape(k) { shapeIdx = k; setMode('timer'); }, setMode, N: () => N, X, Y, T, ROOM, roomOf, tick, flip, THEMES, applyTheme, setTilt(x, y) { gsx = x; gsy = y; } };
   requestAnimationFrame(loop);
 })();
 </script>
