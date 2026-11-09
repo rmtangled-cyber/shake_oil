@@ -153,6 +153,8 @@
   function bowlDepth(u) { return BOWL_R * Math.sqrt(Math.max(0, 1 - u * u)) + NECK * Math.pow(1 - u, 4); }
   // 穴の位置(上の仕切り。ふつうは真ん中、5分の階段だけ左端)。下の仕切りは同じ部品を180度回した形なので、穴は W - HX
   let HX = W / 2;
+  // 底の形: 穴が真ん中のときは丸いお皿。穴が端のとき(5分)は、ほぼ平らで穴へ向かってゆるやかに下がる
+  const floorDepth = u => HX === W / 2 ? bowlDepth(u) : PLATE_V - 18 * u;
   const holeX = p => p ? W - HX : HX;   // p: 0=容器の上側の仕切り 1=下側
   function plateSegs() {
     const segs = [], kinds = [], K = 10, xl = W / 2 - PLATE_HW, xr = W / 2 + PLATE_HW;
@@ -160,11 +162,11 @@
       const f = (x, y) => rot ? [W - x, H - y] : [x, y];   // 下の仕切りは180度回す
       for (const sx of [-1, 1]) {
         const wx = sx < 0 ? xl : xr, hx = HX + sx * HOLE;
-        segs.push([...f(wx, SKIRT_END), ...f(wx, PLATE_Y)]); kinds.push(1);   // コップの壁
-        let [px, py] = f(wx, PLATE_Y);
+        segs.push([...f(wx, SKIRT_END), ...f(wx, PLATE_Y + floorDepth(1))]); kinds.push(1);   // コップの壁
+        let [px, py] = f(wx, PLATE_Y + floorDepth(1));
         for (let k = 1; k <= K; k++) {                                        // 丸い底(穴へ向かってなめらかに下がる)
           const u = 0.5 + 0.5 * Math.cos(Math.PI * k / K);
-          const [nx, ny] = f(hx + (wx - hx) * u, PLATE_Y + bowlDepth(u));
+          const [nx, ny] = f(hx + (wx - hx) * u, PLATE_Y + floorDepth(u));
           segs.push([px, py, nx, ny]); kinds.push(0); px = nx; py = ny;
         }
       }
@@ -249,6 +251,11 @@
   const DRAG_THIN = 0.945;        // 真ん中の薄いすき間では、壁にはさまれてさらにゆっくり
   const DRAG_ROLL = 0.988;
   const ROLL = new Uint8Array(1600);
+  const ONPLATE = new Uint8Array(1600);
+  const STILL = new Uint16Array(1600);
+  const BEAD = new Int32Array(1600), beadNo = [0, 0];   // 粒の番号(穴から出たときの回)
+  let evenBeads = false;
+  const onStairs = y => gby >= 0 ? y < H - PLATE_Y - PLATE_V - 26 : y > PLATE_Y + PLATE_V + 26;   // 仕切りの上に乗っている(平らな底でも、すべって端へ流れていくように)
   let rollFast = true;   // 階段では速く転がさない(小さな粒が段を飛びこえないように、段の上をゆっくり進む)
   const DRAG_CUP = 0.99;          // 厚い部屋の中はさらさら流れて、液面がすぐ平らになる
   const WANDER = 0.005;          // 薄いすき間の中のゆるやかな横の流れ(列がジグザグにゆらぐ)
@@ -269,7 +276,7 @@
     const d0 = Math.abs(x - HX);
     if (d0 <= HOLE) return PLATE_Y + PLATE_V;
     const span = (x < HX ? HX - (W / 2 - PLATE_HW) : (W / 2 + PLATE_HW) - HX) - HOLE;
-    return PLATE_Y + bowlDepth(Math.min(1, (d0 - HOLE) / Math.max(span, 1)));
+    return PLATE_Y + floorDepth(Math.min(1, (d0 - HOLE) / Math.max(span, 1)));
   }
   // いる場所: 0=上のコップの中 1=真ん中(スカートの外の通り道もここ) 2=下のコップの中
   function roomOf(x, y) {
@@ -361,7 +368,7 @@
     { id: 'hourglass', label: '砂時計', min: 1, lag: 17 },
     { id: 'zigzag',    label: 'ジグザグ', min: 2, lag: 37 },
     { id: 'wheel',     label: '水車', min: 3, lag: 13 },
-    { id: 'stairs',    label: '階段', min: 5, lag: 43, drop: 0.25, period: 1.0, even: true, hole: 'edge' },   // 小さな出口: 小さな粒を短い間隔で
+    { id: 'stairs',    label: '階段', min: 5, lag: 95, drop: 0.25, period: 1.0, even: true, hole: 'edge' },   // 小さな出口: 小さな粒を短い間隔で
   ];
   function curve(x0, y0, x1, y1, bend, n) {   // ゆるいカーブ(はじめはなだらか、先へ行くほど下がる)
     const p = [];
@@ -375,7 +382,7 @@
     // 階段: 写真のような、1粒ずつ乗る小さな段の列。穴は左端にあり、右へ10段 → 左へ10段 → 右へ6段 と下りる
     if (id === 'stairs') {
       const L = [];
-      const tab = (cx, y, dir) => [[cx - 8 * dir, y], [cx + 8 * dir, y + 2.5]];   // 段: 進む向きに少し下がる
+      const tab = (cx, y, dir) => [[cx - 8 * dir, y], [cx + 8 * dir, y + 4]];   // 段: 進む向きに少し下がる
       // 列の折り返しでは、次の列の最初の段を少し外側・少し下に置く(粒が段と段の間にはさまらないように)
       for (let k = 0; k < 10; k++) L.push(tab(34 + 14 * k, 104 + 8 * k, 1));      // 左端の穴の下から右へ
       for (let k = 0; k < 10; k++) L.push(tab(166 - 14 * k, 194 + 8 * k, -1));    // 左へ
@@ -550,17 +557,22 @@
   // すき間(縦の仕切りと壁の間)にいるか
   function inChan(x, y) {
     if (Math.abs(x - W / 2) < PLATE_HW) return false;
-    return (y > SKIRT_END && y < PLATE_Y) || (y > H - PLATE_Y && y < H - SKIRT_END);
+    const we = wallEnd();
+    return (y > SKIRT_END && y < we) || (y > H - we && y < H - SKIRT_END);
   }
+  // コップの壁の下の端(底が始まる高さ)。底がほぼ平らなとき(穴が端)は壁が長くなる
+  function wallEnd() { return PLATE_Y + floorDepth(1); }
   // すき間の中と、その出口のすぐ外(出口にぶら下がって止まらないように)
   function inChanZone(x, y) {
     if (Math.abs(x - W / 2) < PLATE_HW) return false;
-    return (y > SKIRT_END - 2 && y < PLATE_Y + 6) || (y > H - PLATE_Y - 6 && y < H - SKIRT_END + 2);
+    const we = wallEnd();
+    return (y > SKIRT_END - 2 && y < we + 6) || (y > H - we - 6 && y < H - SKIRT_END + 2);
   }
   // 受け取る側の山のふち(細いすき間の入口のすぐ上): 山から滑ってきた液は、ここで止まらずにすき間へ流れ込む
   function mouthZone(x, y) {
     if (Math.abs(x - W / 2) < PLATE_HW - 14) return false;
-    return gby >= 0 ? (y > H - PLATE_Y - 34 && y < H - PLATE_Y + 2) : (y > PLATE_Y - 2 && y < PLATE_Y + 34);
+    const we = wallEnd();
+    return gby >= 0 ? (y > H - we - 34 && y < H - we + 2) : (y > we - 2 && y < we + 34);
   }
   // すき間に入れるか: 入口の上(重力と反対向き)に積み重なっている同じ色の液の量(=押す力)で決める。
   // 強く振ったときは、その勢いで膜を破って入れる
@@ -583,7 +595,7 @@
   // 仕切りやふたに押し戻された粒は、押し戻された向きの速さを消す(はじき飛ばされないように)
   const HIT = new Uint8Array(MAXN), HNX = new Float32Array(MAXN), HNY = new Float32Array(MAXN);
   function collidePlates(i) {
-    HIT[i] = 0; ROLL[i] = Math.max(0, ROLL[i] - 1);
+    HIT[i] = 0; ROLL[i] = Math.max(0, ROLL[i] - 1); ONPLATE[i] = Math.max(0, ONPLATE[i] - 1);
     for (let s = 0; s < NS; s++) {
       if (s >= NPLATE && s < NBASE && !(lidMask[s - NPLATE] & (1 << T[i]))) continue;
       const x = X[i], y = Y[i];
@@ -604,7 +616,7 @@
         const side = s0 > 0 ? 1 : -1;
         X[i] = qx + SNX[s] * m * side; Y[i] = qy + SNY[s] * m * side;
         HIT[i] = 1; HNX[i] = SNX[s] * side; HNY[i] = SNY[s] * side;
-        if (s >= NBASE) ROLL[i] = 6;
+        if (s >= NBASE) ROLL[i] = 6; else if (SKIND[s] === 0) ONPLATE[i] = 6;
       } else if (d2 < m * m) {
         const d = Math.sqrt(d2);
         let nx, ny;
@@ -612,7 +624,7 @@
         else { nx = dx / d; ny = dy / d; }
         X[i] = qx + nx * m; Y[i] = qy + ny * m;
         HIT[i] = 1; HNX[i] = nx; HNY[i] = ny;
-        if (s >= NBASE) ROLL[i] = 6;
+        if (s >= NBASE) ROLL[i] = 6; else if (SKIND[s] === 0) ONPLATE[i] = 6;
       }
     }
   }
@@ -632,9 +644,12 @@
       // 薄い所(コップの外側)では壁にはさまれてゆっくり。受け皿の山の上の液は、ふつうの速さで端へ流れる
       const thin = ROOM[i] === 1 && yy < H - PLATE_Y - PLATE_V - 40;
       // 段やカーブに乗っている滴は、すべるように転がっていく(段の上にたまらないように)
-      const fastRoll = ROLL[i] && rollFast;
-      const dr = fastRoll ? DRAG_ROLL : thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
-      if (fastRoll) g *= 2.2;
+      const fastRoll = ROLL[i] && rollFast, midRoll = ROLL[i] && !rollFast;
+      // 穴が端のときの、ほぼ平らな下の仕切りの上にたまった液(すべって端のすき間へ流れていく)
+      const onFlat = HX !== W / 2 && ROOM[i] === 1 && (ONPLATE[i] || (gby >= 0 ? Y[i] > H - PLATE_Y - PLATE_V - 26 : Y[i] < PLATE_Y + PLATE_V + 26));
+      const dr = fastRoll ? DRAG_ROLL : onFlat ? DRAG_ROLL : midRoll ? 0.976 : thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
+      if (onFlat) g *= 1.8;
+      if (fastRoll) g *= 2.2; else if (midRoll) g *= 1.4;   // 階段: 段を飛びこえないくらいに、少し速く転がる
       // 薄いすき間の中では、ゆるやかな流れで滴の列が左右にゆらぐ(色ごとに奥行きが違うので流れも少し違う)
       let wx = 0;
       if (thin) { const ph = T[i] * 2.1;
@@ -664,6 +679,9 @@
             // 青とピンクは表と裏の別の層にあるので、どこでもお互いにぶつからない(同じ色どうしだけ計算する)
             if (T[j] !== ti) continue;
             if (sep && ((SIDEM[i] ^ SIDEM[j]) & EXTM[i] & EXTM[j])) continue;
+            // 階段: 粒どうしはくっつかず、1粒ずつのまま段を下りる(合わさって大きなかたまりになり、段に引っかからないように)
+            //   (下の仕切りの上まで来たら、ふつうにくっついてまとまり、端のすき間へ流れていく)
+            if (evenBeads && ROOM[i] === 1 && ROOM[j] === 1 && BEAD[i] !== BEAD[j] && onStairs(yi) && onStairs(Y[j])) continue;
             // 仕切りの向こう側(別の部屋)の液とは引っぱり合わない: 出た滴が穴へ引き戻されない
             // ぶら下がる滴をつくっている間だけ、ノズルの上と下の液がつながる。切れたあとは引き戻されない
             if (ROOM[j] !== ROOM[i] && !(crossOK[ti] && Math.abs(xi - nozX) < HOLE + 16)) continue;
@@ -726,7 +744,7 @@
         const viaHole = Math.abs(x - hxc) < HOLE + 2 && Math.abs(PX[i] - hxc) < HOLE + 2;
         const nearEnd = (yy) => yy < SKIRT_END + 8 || yy > H - SKIRT_END - 8;
         const viaSkirt = nearEnd(y) && nearEnd(PY[i]);
-        if (viaHole || viaSkirt) ROOM[i] = r;
+        if (viaHole || viaSkirt) { if (ROOM[i] !== 1 && r === 1) BEAD[i] = beadNo[T[i]]; ROOM[i] = r; }
         else { x = PX[i]; y = PY[i]; }
       }
       X[i] = x; Y[i] = y;
@@ -738,6 +756,10 @@
         (Math.abs(x - (W - HX)) < HOLE + 4 && Math.abs(y - H + PLATE_Y + PLATE_V) < 16);
       const vmax = inHole ? 0.8 : VMAX;
       if (v2 > vmax * vmax) { const s = vmax / Math.sqrt(v2); vx *= s; vy *= s; }
+      // 段の角などで止まってしまった粒は、少したったら軽くゆすって動き出させる(タイマーの飾りがあるときだけ)
+      if (decoLines.length && ROOM[i] === 1 && vx * vx + vy * vy < 0.0004) {
+        if (++STILL[i] > 90) { STILL[i] = 0; vx += (Math.random() - .5) * 0.6 + gbx * 0.4; vy += gby * 0.4; }
+      } else STILL[i] = 0;
       VX[i] = vx; VY[i] = vy;
     }
   }
@@ -1337,8 +1359,9 @@
     const shp = mode === 'timer' ? SHAPES[shapeIdx] : null, dsc = shp ? (shp.drop || 1) : 1;
     // 階段は同じ大きさの粒を等間隔に。ほかは大小ばらばら
     const vary = () => shp && shp.even ? 1 : 0.6 + Math.random() * 0.9;
-    if (phaseA < 1 / 60) { dropDone[0] = false; dropSize[0] = Math.max(4, DROP_N * dsc * vary()); }
-    if (phaseB < 1 / 60) { dropDone[1] = false; dropSize[1] = Math.max(4, DROP_N * dsc * vary()); }
+    evenBeads = !!(shp && shp.even);
+    if (phaseA < 1 / 60) { beadNo[0]++; dropDone[0] = false; dropSize[0] = Math.max(4, DROP_N * dsc * vary()); }
+    if (phaseB < 1 / 60) { beadNo[1]++; dropDone[1] = false; dropSize[1] = Math.max(4, DROP_N * dsc * vary()); }
     simT += 1 / 60;
     if (f < 0) { lidMask.fill(3); nozY[0] = nozY[1] = -1; crossOK[0] = crossOK[1] = false; }   // 回転の途中は全部閉じる
     else {
@@ -1382,7 +1405,7 @@
         let moving = false;
         for (let i = 0; i < N && !moving; i++) if (ROOM[i] === 1 && VX[i] * VX[i] + VY[i] * VY[i] > 0.0025) moving = true;
         if (moving || top > 0) midSince = el;
-        // (水車に乗ったまま回り続ける液は待たない。決めた時間を大きく過ぎたら終わりにする)
+        // (水車に乗ったまま回り続ける液や、ゆらゆら動き続ける少しの液は待たない。決めた時間を少し過ぎたら終わりにする)
         if (top === 0 && (mid <= 4 || el - midSince > 3 || el > sh.min * 60 + 8)) { timerDone = true; lastDoneAt = el; chime(); }
       }
     }
