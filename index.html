@@ -235,6 +235,7 @@
   const DRAG_THIN = 0.945;        // 真ん中の薄いすき間では、壁にはさまれてさらにゆっくり
   const DRAG_ROLL = 0.988;
   const ROLL = new Uint8Array(1600);
+  let rollFast = true;   // 階段では速く転がさない(小さな粒が段を飛びこえないように、段の上をゆっくり進む)
   const DRAG_CUP = 0.99;          // 厚い部屋の中はさらさら流れて、液面がすぐ平らになる
   const WANDER = 0.005;          // 薄いすき間の中のゆるやかな横の流れ(列がジグザグにゆらぐ)
   let simT = 0;
@@ -266,6 +267,39 @@
   }
   // タイマーモード: 上の部屋を、決めた量になるまで裏で補充する(下の液のいちばん底=見えない所から戻す)
   const topTarget = [0, 0];
+  function keepTop(targetOf) {
+    if (Math.abs(gby) < 0.3) return;
+    const rel = gby > 0 ? 0 : 2, recv = 2 - rel;
+    for (const t of [0, 1]) {
+      let c = 0; for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel) c++;
+      for (const tgt = targetOf(t); c < tgt; c++) {
+        let deep = -1, dv = -1e9;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === recv) { const v = Y[i] * gby; if (v > dv) { dv = v; deep = i; } }
+        let k = 0, pick = -1;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel && Math.random() * ++k < 1) pick = i;
+        if (deep < 0 || pick < 0) break;
+        X[deep] = PX[deep] = X[pick] + (Math.random() - .5) * 2; Y[deep] = PY[deep] = Y[pick] - gby * (Math.random() * 2);
+        VX[deep] = VY[deep] = 0; ROOM[deep] = rel;
+      }
+    }
+  }
+  function keepLanded(targetOf) {
+    if (Math.abs(gby) < 0.3) return;
+    const recv = gby > 0 ? 2 : 0, rel = 2 - recv;
+    const landed = i => ROOM[i] === recv || (ROOM[i] === 1 && (gby > 0 ? Y[i] > H - PLATE_Y - PLATE_V - 12 : Y[i] < PLATE_Y + PLATE_V + 12));
+    for (const t of [0, 1]) {
+      let c = 0; for (let i = 0; i < N; i++) if (T[i] === t && landed(i)) c++;
+      for (const tgt = targetOf(t); c > tgt; c--) {
+        let deep = -1, dv = -1e9;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === recv) { const v = Y[i] * gby; if (v > dv) { dv = v; deep = i; } }
+        let k = 0, pick = -1;
+        for (let i = 0; i < N; i++) if (T[i] === t && ROOM[i] === rel && Math.random() * ++k < 1) pick = i;
+        if (deep < 0 || pick < 0) break;
+        X[deep] = PX[deep] = X[pick] + (Math.random() - .5) * 2; Y[deep] = PY[deep] = Y[pick] - gby * (Math.random() * 2);
+        VX[deep] = VY[deep] = 0; ROOM[deep] = rel;
+      }
+    }
+  }
   function refillTop() {
     if (Math.abs(gby) < 0.3) return;
     const rel = gby > 0 ? 0 : 2, recv = 2 - rel;
@@ -307,13 +341,13 @@
   //   ・ジグザグ: 斜めの段を左右に転がりながら下りる(約2分)
   //   ・水車: 落ちる滴で水車が回る(約3分)
   //   ・階段: ほぼ水平な細い棚が何段もあり、小さな粒が転がって端から次の段へ落ちる(約5分)。出口を小さくして粒を細かく
-  // 容量は現実より多くてよい(ユーザー確認): 上の部屋は、終わりの手前まで裏で補充して減らないようにし、
-  // 最後に補充をやめて落ちきる。DRAIN はその「補充をやめてから落ちきるまで」の秒数(測って決めた値)
+  // 容量は現実より多くてよい(ユーザー確認): 上の量を時間どおりに少しずつ減らし、早く減りすぎたぶんは
+  // 下のいちばん底(見えない所)から上へ戻す。下も時間とともにたまっていく。lag は真ん中を通る時間ぶんの前倒し(測って決めた値)
   const SHAPES = [
-    { id: 'hourglass', label: '砂時計', min: 1, drain: 54 },
-    { id: 'zigzag',    label: 'ジグザグ', min: 2, drain: 55 },
-    { id: 'wheel',     label: '水車', min: 3, drain: 45 },
-    { id: 'stairs',    label: '階段', min: 5, drain: 259, drop: 0.32, period: 0.6 },   // 小さな出口: 小さな粒を短い間隔で
+    { id: 'hourglass', label: '砂時計', min: 1, lag: 17 },
+    { id: 'zigzag',    label: 'ジグザグ', min: 2, lag: 37 },
+    { id: 'wheel',     label: '水車', min: 3, lag: 13 },
+    { id: 'stairs',    label: '階段', min: 5, lag: 35, drop: 0.32, period: 0.6 },   // 小さな出口: 小さな粒を短い間隔で
   ];
   function curve(x0, y0, x1, y1, bend, n) {   // ゆるいカーブ(はじめはなだらか、先へ行くほど下がる)
     const p = [];
@@ -324,10 +358,17 @@
     if (id === 'zigzag') return [
       [[152, 118], [64, 150]], [[48, 188], [136, 220]], [[152, 258], [64, 290]],
     ];
+    // 階段: 小さな段が斜めに並ぶ。右へ3段下りたら、壁のある段(_|)で向きを変えて左へ3段、また壁のある段(L)で向きを変える
     if (id === 'stairs') return [
-      [[60, 116], [150, 124]], [[140, 152], [50, 160]], [[60, 188], [150, 196]],
-      [[140, 224], [50, 232]], [[60, 260], [150, 268]], [[140, 296], [50, 304]],
+      [[84, 113], [124, 120]], [[104, 137], [144, 144]], [[124, 161], [164, 168]],
+      [[176, 188], [138, 199]],
+      [[156, 213], [116, 220]], [[136, 237], [96, 244]], [[116, 261], [76, 268]],
+      [[40, 284], [96, 296]],
     ];
+    return [];
+  }
+  function shapeWalls(id) {   // 向きを変える段の、短い壁
+    if (id === 'stairs') return [[[176, 173], [176, 188]], [[40, 269], [40, 284]]];
     return [];
   }
   const WHEEL = { x: 118, y: 212, r: 40, hub: 9, n: 6 };
@@ -362,6 +403,7 @@
       decoLines.push({ x0: pts[0][0], x1: pts[pts.length - 1][0], pts });
       for (let k = 0; k + 1 < line.length; k++) { const [a, b] = tf(...line[k]), [c, d] = tf(...line[k + 1]); setSeg(i++, a, b, c, d); }
     }
+    for (const w of shapeWalls(id)) { const [a, b] = tf(...w[0]), [c, d] = tf(...w[1]); setSeg(i++, a, b, c, d); }
     wheelBase = i;
     if (id === 'wheel') {
       const [cx, cy] = wheelCenter();
@@ -572,8 +614,9 @@
       // 薄い所(コップの外側)では壁にはさまれてゆっくり。受け皿の山の上の液は、ふつうの速さで端へ流れる
       const thin = ROOM[i] === 1 && yy < H - PLATE_Y - PLATE_V - 40;
       // 段やカーブに乗っている滴は、すべるように転がっていく(段の上にたまらないように)
-      const dr = ROLL[i] ? DRAG_ROLL : thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
-      if (ROLL[i]) g *= 2.2;
+      const fastRoll = ROLL[i] && rollFast;
+      const dr = fastRoll ? DRAG_ROLL : thin ? DRAG_THIN : ROOM[i] !== 1 ? DRAG_CUP : DRAG;
+      if (fastRoll) g *= 2.2;
       // 薄いすき間の中では、ゆるやかな流れで滴の列が左右にゆらぐ(色ごとに奥行きが違うので流れも少し違う)
       let wx = 0;
       if (thin) { const ph = T[i] * 2.1;
@@ -944,7 +987,7 @@
     c.clearRect(-SIDE, -CAP, ow, oh);
     const id = mode === 'timer' ? SHAPES[shapeIdx].id : 'hourglass';
     c.lineCap = 'round'; c.lineJoin = 'round';
-    for (const line of shapeLines(id)) {
+    for (const line of [...shapeLines(id), ...shapeWalls(id)]) {
       c.beginPath(); line.forEach((p, k) => { const [x, y] = tf(...p); k ? c.lineTo(x, y) : c.moveTo(x, y); });
       c.strokeStyle = 'rgba(255,255,255,0.85)'; c.lineWidth = 4.5; c.stroke();
       c.strokeStyle = 'rgba(130,110,135,0.32)'; c.lineWidth = 1; c.stroke();
@@ -1110,6 +1153,7 @@
   const stage = document.getElementById('stage');
   let lastTap = 0;
   stage.addEventListener('pointerdown', e => {
+    if (mode === 'timer') return;   // タイマーモードでは動かしたり、ひっくり返したりしない(時間が狂うので)
     dragging = true; stage.setPointerCapture(e.pointerId);
     grabX = bx - e.clientX; grabY = by - e.clientY; tx = bx; ty = by;
     const now = performance.now();
@@ -1197,6 +1241,7 @@
   function restart() {
     const per = mode === 'timer' ? (SHAPES[shapeIdx].period || 2.4) : 2.4;
     DRIP_PERIOD = per; DRIP_OPEN = per * 0.4;
+    rollFast = !(mode === 'timer' && SHAPES[shapeIdx].id === 'stairs');
     layoutFlip = gby < 0;
     init();
     buildDeco();
@@ -1297,8 +1342,12 @@
     if (decoOn && mode === 'timer' && SHAPES[shapeIdx].id === 'wheel') stepWheel();
     if (mode === 'timer' && !flipPending) {
       const sh = SHAPES[shapeIdx], el = simT - timerStart;
-      if (el < sh.min * 60 - sh.drain) refillTop();   // 終わりの手前までは上を減らさない
-      else if (!timerDone) {
+      // 下にたまる量を、時間に合わせて少しずつ増やす(ずっとモードと同じく、多く届いたぶんは下のいちばん底から上へ戻す)
+      //   設定した時間でちょうど全部が下にたまる。下があふれることはない
+      //   上の量を時間どおりに減らす(早く減りすぎたら、下のいちばん底から戻す)。lag は滴が真ん中を通る時間ぶんの前倒し
+      const prog = Math.min(1, el / (sh.min * 60 - (sh.lag || 0)));
+      keepTop(t => Math.ceil(topTarget[t] * (1 - prog)));
+      if (!timerDone) {
         let top = 0, mid = 0; const rel = gby > 0 ? 0 : 2;
         for (let i = 0; i < N; i++) { if (ROOM[i] === rel) top++; else if (ROOM[i] === 1) mid++; }
         // 上が空になり、真ん中も(ほぼ)空になったら終わり。少しだけ引っかかって残った液は待たない
@@ -1306,7 +1355,8 @@
         let moving = false;
         for (let i = 0; i < N && !moving; i++) if (ROOM[i] === 1 && VX[i] * VX[i] + VY[i] * VY[i] > 0.0025) moving = true;
         if (moving || top > 0) midSince = el;
-        if (top === 0 && (mid <= 4 || el - midSince > 3)) { timerDone = true; lastDoneAt = el; chime(); }
+        // (水車に乗ったまま回り続ける液は待たない。決めた時間を大きく過ぎたら終わりにする)
+        if (top === 0 && (mid <= 4 || el - midSince > 3 || el > sh.min * 60 + 8)) { timerDone = true; lastDoneAt = el; chime(); }
       }
     }
     for (let s = 0; s < SUB; s++) substep();
