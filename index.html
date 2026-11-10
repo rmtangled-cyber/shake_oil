@@ -834,6 +834,13 @@
     // 薄い所かどうか(1=薄い 0=厚い)。形は変わらないので、前もって作った画像から読む(軽くするため)
     uniform sampler2D uThin;
     uniform float uDepth;              // 厚い部屋の奥行き(少し上から見たときに見える上面の高さ)
+    // 屈折: 液体越しに見える後ろの背景の絵。容器の座標 → 画面の位置 → 背景の絵の位置 へ変換する
+    uniform sampler2D uBg; uniform float uHasBg, uRefr;
+    uniform vec2 uView, uBgSize, uLocal0, uOrigin, uBottle; uniform float uScale, uRot;
+    vec2 toScreen(vec2 w){ vec2 l = uLocal0 + w * uScale - uOrigin; float c = cos(uRot), s = sin(uRot);
+      return uBottle + uOrigin + vec2(c*l.x - s*l.y, s*l.x + c*l.y); }
+    vec3 bgAt(vec2 sp){ float k = max(uView.x / uBgSize.x, uView.y / uBgSize.y); vec2 img = uBgSize * k;
+      vec2 uv = (sp - (uView - img) * .5) / img; return texture2D(uBg, vec2(uv.x, uv.y)).rgb; }
     float thinAt(vec2 p){ return texture2D(uThin, vec2(p.x / uSize.x, 1. - p.y / uSize.y)).r; }
     float halfW(float y){ float s = sin(3.14159265*clamp(y/uSize.y,0.,1.)); return uSize.x*.5 - uWaist*s*s; }
     void main(){
@@ -900,6 +907,27 @@
       col = mix(col, vec3(1.), bubbleRim*.55) + bubbleSpec + (sa+sb)*mix(1., .55, tm) + soft;
       // 手前の面の上の縁: 上面との角が光を受けて明るく光る
       float alpha = max(max(ab*mix(.97,.9,tm), ap*mix(.96,.88,tm)), ao*(.15 + .6*bubbleRim + bubbleSpec));
+      // ---- 屈折と厚み ----
+      // 液体を「後ろの景色を、色のついたレンズ越しに見ている」ように描く。
+      //   屈折: 表面の傾き(法線)と厚みのぶんだけ、後ろの背景がずれて見える
+      //   厚み: 厚いところほど光が長く液の中を通るので、色が濃く(ベール・ランバートの法則)、薄いところは淡く透ける
+      if (uHasBg > .5 && front > .003) {
+        float thA = ab * mix(.75 + da * 1.6, .55, tm), thB = ap * mix(.75 + db * 1.6, .55, tm);
+        vec2 nrm = (na.xy * ab * (.6 + thA) + nb.xy * ap * (.6 + thB));
+        float cr = cos(uRot), sr = sin(uRot);
+        vec2 off = vec2(cr*nrm.x - sr*nrm.y, sr*nrm.x + cr*nrm.y) * vec2(1., -1.) * 18. * uScale;
+        vec2 sp = toScreen(w);
+        // 色ごとに少しずらして読む(ふちにほんのり虹色)
+        vec3 bgc = vec3(bgAt(sp + off * 1.06).r, bgAt(sp + off).g, bgAt(sp + off * .94).b);
+        vec3 TA = pow(max(colA, vec3(.02)), vec3(.5 + thA * .6));
+        vec3 TB = pow(max(colB, vec3(.02)), vec3(.5 + thB * .6));
+        vec3 rc = bgc * mix(vec3(1.), TB, ap) * mix(vec3(1.), TA, ab);
+        // 表面の反射: 斜めの面ほど周りの明るさを映す(ふちが光る)
+        float fres = pow(1. - max(na.z * ab + nb.z * ap * (1. - ab) + (1. - front), 0.), 3.);
+        rc += fres * .28 + (sa + sb) * mix(1., .55, tm) + soft;
+        col = mix(col, rc, uRefr * front);
+        alpha = mix(alpha, front, uRefr);
+      }
       // 液の上面: 明るい色の平らな面。手前の縁ほど光を映して明るく、奥の縁に細い濃い線
       if (uTop > .003) {
         // 層ごとの上面。2つの層が重なって見えるところは、手前の面と同じく色を掛け合わせる
@@ -927,6 +955,24 @@
   gl.bufferData(gl.ARRAY_BUFFER, pData.byteLength, gl.DYNAMIC_DRAW);
 
   // 薄い所の地図(1=薄い 0=厚い)。厚いのは上下のコップの内側と、容器の端のあたりだけ
+  // 屈折に使う季節の背景の絵(読みこみ終わったものから使う)
+  const REFRACT = 0.85;   // 屈折・厚みの見せ方の強さ(0 で前の描き方)
+  const bgTex = ['spring', 'summer', 'autumn', 'winter'].map(n => {
+    const o = { ready: false, tex: null, w: 1, h: 1 }, img = new Image();
+    img.onload = () => {
+      try {
+        o.tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, o.tex);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        o.w = img.naturalWidth; o.h = img.naturalHeight; o.ready = true;
+      } catch (_) {}   // 読みこめないとき(ファイルを直接開いたときなど)は、前の描き方のまま
+    };
+    img.src = `bg/${n}.jpg`;
+    return o;
+  });
+  let curRot = 0;
   const thinTex = gl.createTexture();
   function buildThinTex() {
     const TW = 100, TH = 210, buf = new Uint8Array(TW * TH);
@@ -966,7 +1012,7 @@
 
   const uS = { size: gl.getUniformLocation(splatP, 'uSize'), pt: gl.getUniformLocation(splatP, 'uPt'),
                 plate: gl.getUniformLocation(splatP, 'uPlate'), plate2: gl.getUniformLocation(splatP, 'uPlate2') };
-  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uDepth','uThin']) uC[n] = gl.getUniformLocation(compP, n);
+  const uC = {}; for (const n of ['uF','uTx','uSize','uWaist','uA0','uA1','uB0','uB1','uDepth','uThin','uBg','uHasBg','uRefr','uView','uBgSize','uLocal0','uOrigin','uBottle','uScale','uRot']) uC[n] = gl.getUniformLocation(compP, n);
   const aS = gl.getAttribLocation(splatP, 'a'), aC = gl.getAttribLocation(compP, 'a');
 
   function render() {
@@ -1004,6 +1050,16 @@
     gl.uniform3fv(uC.uB0, th.B[0]); gl.uniform3fv(uC.uB1, th.B[1]);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, thinTex); gl.uniform1i(uC.uThin, 1); gl.activeTexture(gl.TEXTURE0);
     gl.uniform1f(uC.uDepth, DEPTH);
+    // 屈折用の背景
+    const bgT = bgTex[theme];
+    gl.uniform1f(uC.uHasBg, bgT && bgT.ready ? 1 : 0); gl.uniform1f(uC.uRefr, REFRACT);
+    if (bgT && bgT.ready) {
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, bgT.tex); gl.uniform1i(uC.uBg, 2); gl.activeTexture(gl.TEXTURE0);
+      gl.uniform2f(uC.uBgSize, bgT.w, bgT.h);
+    }
+    gl.uniform2f(uC.uView, vw, vh); gl.uniform1f(uC.uScale, scale);
+    gl.uniform2f(uC.uLocal0, SIDE * scale, CAP * scale); gl.uniform2f(uC.uOrigin, OW * scale / 2, OH * scale / 2);
+    gl.uniform2f(uC.uBottle, bx, by); gl.uniform1f(uC.uRot, curRot);
     gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
     gl.enableVertexAttribArray(aC);
     gl.vertexAttribPointer(aC, 2, gl.FLOAT, false, 0, 0);
@@ -1422,6 +1478,7 @@
     if (n === 3) acc = 0;
     simMs = simMs * 0.9 + (performance.now() - t0) * 0.1;
     const tilt = Math.max(-0.2, Math.min(0.2, bvx * 0.008));
+    curRot = ang + tilt;
     bottleEl.style.transform = `translate3d(${bx}px,${by}px,0) rotate(${ang + tilt}rad)`;
     if (wheelCv.style.display !== 'none') wheelCv.style.transform = `rotate(${wheelAng}rad)`;
     shadowEl.style.transform = `translate3d(${bx - OW * scale * 0.15}px,${homeY + OH * scale - 10 * scale}px,0)`;
