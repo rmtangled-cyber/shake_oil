@@ -1,0 +1,41 @@
+# Unity が自動で作るフォルダ(GitHub に入れない)
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# エディタや OS の一時ファイル
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.tmp
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-build.properties
+Thumbs.db
+.DS_Store
+
+# ビルドしたアプリ
+*.apk
+*.aab
+*.unitypackage
+*.app
